@@ -41,17 +41,17 @@ sigma: ''
 # set to True to use multi-gpu training
 multi_gpu: False
 
-wandb_activate: False
+wandb_activate: True
 wandb_group: ''
 wandb_name: ${train.params.config.name}
-wandb_entity: ''
-wandb_project: 'isaacgymenvs'
+wandb_entity: 'xuefeiyang1314'
+wandb_project: 'AMP-ISAAC-GYM'
 wandb_tags: []
 wandb_logcode_dir: '' 
 
 capture_video: False
-capture_video_freq: 1464
-capture_video_len: 100
+capture_video_freq: 1500
+capture_video_len: 1499
 force_render: True
 
 # disables rendering

@@ -101,6 +101,7 @@ class AMPAgent(a2c_continuous.A2CAgent):
         self._amp_replay_keep_prob = self.config['amp_replay_keep_prob']
         self._amp_replay_buffer = replay_buffer.ReplayBuffer(int(self.config['amp_replay_buffer_size']), self.ppo_device)
 
+
     def init_tensors(self):
         super().init_tensors()
         self.experience_buffer.tensor_dict['next_obses'] = torch.zeros_like(self.experience_buffer.tensor_dict['obses'])
@@ -611,11 +612,11 @@ class AMPAgent(a2c_continuous.A2CAgent):
         disc_r = amp_rewards['disc_rewards']
         if self._reward_combine == 'add':
             combined_rewards = self._task_reward_w * task_rewards + \
-                             + self._disc_reward_w * disc_r
+                               self._disc_reward_w * disc_r
         elif self._reward_combine == 'mul':
             assert self._task_reward_w * self._disc_reward_w > 0.0  # assure the reward not always zero
             combined_rewards = self._task_reward_w * task_rewards * \
-                             + self._disc_reward_w * disc_r
+                               self._disc_reward_w * disc_r
         else:
             raise NotImplementedError(f"unknown reward combine method: {self._reward_combine}")
         return combined_rewards

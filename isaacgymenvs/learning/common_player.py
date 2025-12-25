@@ -32,6 +32,8 @@ from rl_games.algos_torch import players
 from rl_games.algos_torch import torch_ext
 from rl_games.algos_torch.running_mean_std import RunningMeanStd
 from rl_games.common.player import BasePlayer
+from isaacgym import gymapi
+import time
 
 
 class CommonPlayer(players.PpoPlayerContinuous):
@@ -52,6 +54,7 @@ class CommonPlayer(players.PpoPlayerContinuous):
         return
 
     def run(self):
+        self.games_num = 3
         n_games = self.games_num
         render = self.render_env
         n_game_life = self.n_game_life
@@ -72,6 +75,25 @@ class CommonPlayer(players.PpoPlayerContinuous):
             has_masks = self.env.has_action_mask()
 
         need_init_rnn = self.is_rnn
+
+        print(f"\nRunning {self.games_num} games, {n_game_life} games life, {self.max_steps} max steps, render={render}, deterministic={is_determenistic}, has_masks={has_masks}, num_env={self.env.num_envs}\n")
+        print(f"{type(self.env)}")
+
+        # # 遍历所有环境实例
+        # for env_idx, env_handle in enumerate(self.env.envs):
+        #     print(f"Environment {env_idx}:")
+            
+        #     # 获取所有相机句柄
+        #     cameras = self.env.gym.get_all_camera_handles(self.env.sim, env_handle)
+        #     print("Cameras:", cameras)
+            
+        #     for cam in cameras:
+        #         cam_props = self.env.gym.get_camera_properties(self.env.sim, cam)
+        #         print(f"Camera handle {cam} properties:", cam_props)
+
+        # time.sleep(1000.0)
+
+
         for _ in range(n_games):
             if games_played >= n_games:
                 break
@@ -103,9 +125,14 @@ class CommonPlayer(players.PpoPlayerContinuous):
   
                 self._post_step(info)
 
-                if render:
-                    self.env.render(mode = 'human')
-                    time.sleep(self.render_sleep)
+                # img = self.env.render(mode = 'rgb_array')
+                # print(img.shape)
+                # time.sleep(0.05)
+                # if render:
+                #     self.env.render(mode = 'rgb_array')
+                #     # print(img.shape)
+                #     # time.sleep(10000)
+                #     time.sleep(self.render_sleep)
 
                 all_done_indices = done.nonzero(as_tuple=False)
                 done_indices = all_done_indices[::self.num_agents]

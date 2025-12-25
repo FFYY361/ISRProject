@@ -49,6 +49,8 @@ KEY_BODY_NAMES = ["right_hand", "left_hand", "right_foot", "left_foot"]
 class HumanoidAMPBase(VecTask):
 
     def __init__(self, config, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
+
+
         self.cfg = config
 
         self.task_speed = self.cfg["env"]["task_speed"]
@@ -72,6 +74,8 @@ class HumanoidAMPBase(VecTask):
 
         self.cfg["env"]["numObservations"] = self.get_obs_size()
         self.cfg["env"]["numActions"] = self.get_action_size()
+        if virtual_screen_capture:
+            self.cfg["env"]["enableCameraSensors"] = True
 
         super().__init__(config=self.cfg, rl_device=rl_device, sim_device=sim_device, graphics_device_id=graphics_device_id, headless=headless, virtual_screen_capture=virtual_screen_capture, force_render=force_render)
         
@@ -121,10 +125,11 @@ class HumanoidAMPBase(VecTask):
         self._contact_forces = gymtorch.wrap_tensor(contact_force_tensor).view(self.num_envs, self.num_bodies, 3)
         
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
-        
         if self.viewer != None:
             self._init_camera()
-            
+        if self.viewer is None and virtual_screen_capture:     
+            self._init_headless_cameras()
+
         return
 
     def get_obs_size(self):
@@ -143,7 +148,7 @@ class HumanoidAMPBase(VecTask):
         # If randomizing, apply once immediately on startup before the fist sim step
         if self.randomize:
             self.apply_randomizations(self.randomization_params)
-
+        
         return
 
     def reset_idx(self, env_ids):
@@ -393,10 +398,49 @@ class HumanoidAMPBase(VecTask):
         return
 
     def render(self, mode="rgb_array"):
-        if self.viewer and self.camera_follow:
-            self._update_camera()
+        if mode == "rgb_array" and self.virtual_screen_capture:
+            # 1. 如果是无头模式，确保相机已经初始化
+            # if not hasattr(self, 'cam_handles') or len(self.cam_handles) == 0:
+            #     self._init_headless_cameras()
 
-        return super().render(mode)
+            # 2. 更新所有相机的跟随位置
+            self.gym.refresh_actor_root_state_tensor(self.sim)
+            for i in range(self.num_envs):
+                char_pos = self._root_states[i, 0:3].cpu().numpy()
+                cam_pos = gymapi.Vec3(char_pos[0], char_pos[1] - 3.0, 1.0)
+                cam_target = gymapi.Vec3(char_pos[0], char_pos[1], 1.0)
+                self.gym.set_camera_location(self.cam_handles[i], self.envs[i], cam_pos, cam_target)
+
+            # 3. 执行图形渲染步骤
+            self.gym.fetch_results(self.sim, True)
+            self.gym.step_graphics(self.sim)
+            
+            # 关键修正：使用正确的方法名 render_all_camera_sensors
+            self.gym.render_all_camera_sensors(self.sim)
+            
+            # 4. 获取图像数据
+            self.gym.start_access_image_tensors(self.sim)
+            # 获取第一个环境的相机图像
+            cam_img_tensor = self.gym.get_camera_image_gpu_tensor(
+                self.sim, self.envs[0], self.cam_handles[0], gymapi.IMAGE_COLOR
+            )
+            
+            # 转换为 torch 再到 numpy (RGBA 格式)
+            torch_cam_tensor = gymtorch.wrap_tensor(cam_img_tensor)
+            img_raw = torch_cam_tensor.cpu().numpy()
+            self.gym.end_access_image_tensors(self.sim)
+
+            # 返回 RGB (去掉 Alpha 通道)
+            return img_raw[:, :, :3]
+
+        # 如果有 Viewer 则使用默认渲染
+        if self.viewer:
+            if self.camera_follow:
+                self._update_camera()
+            return super().render(mode)
+        
+        return None
+
 
     def _build_key_body_ids_tensor(self, env_ptr, actor_handle):
         body_ids = []
@@ -456,6 +500,45 @@ class HumanoidAMPBase(VecTask):
     def _update_debug_viz(self):
         self.gym.clear_lines(self.viewer)
         return
+
+    def _init_headless_cameras(self):
+        """为无头模式初始化相机传感器"""
+        if self.graphics_device_id == -1:
+            print("警告: graphics_device_id 为 -1，相机传感器无法创建！")
+            exit(1)
+        self.cam_handles = []
+        camera_props = gymapi.CameraProperties()
+        camera_props.width = 640
+        camera_props.height = 480
+        camera_props.enable_tensors = True # 必须为True以支持快速读取
+
+        for i in range(self.num_envs):
+            cam_handle = self.gym.create_camera_sensor(self.envs[i], camera_props)
+            self.cam_handles.append(cam_handle)
+            
+            # 初始位置设置 (仿照 _init_camera)
+            char_pos = self._root_states[i, 0:3].cpu().numpy()
+            cam_pos = gymapi.Vec3(char_pos[0], char_pos[1] - 3.0, 1.0)
+            cam_target = gymapi.Vec3(char_pos[0], char_pos[1], 1.0)
+            self.gym.set_camera_location(cam_handle, self.envs[i], cam_pos, cam_target)
+
+    def _update_headless_camera(self):
+        # 增加安全检查
+        if not hasattr(self, '_headless_camera_handle') or self._headless_camera_handle == -1:
+            return
+
+        env_ptr = self.envs[0]
+        char_root_pos = self._root_states[0, 0:3].cpu().numpy()
+
+        # 计算相机位置（保持固定偏移）
+        cam_pos = gymapi.Vec3(char_root_pos[0], char_root_pos[1] - 3.0, 1.0)
+        cam_target = gymapi.Vec3(char_root_pos[0], char_root_pos[1], 1.0)
+        
+        # 使用 set_camera_location 比 set_camera_transform 在简单跟随场景下更稳健
+        self.gym.set_camera_location(self._headless_camera_handle, env_ptr, cam_pos, cam_target)
+
+
+
 
 #####################################################################
 ###=========================jit functions=========================###

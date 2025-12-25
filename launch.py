@@ -59,7 +59,7 @@ def cleanup_failed_runs():
         if not os.path.isdir(pj("runs", d)):
             continue
         p = pj("runs", pj(d, "nn"))
-        if len(os.listdir(p)) == 0:
+        if not os.path.isdir(p) or not len(os.listdir(p)):
             import shutil
             print(f"cleaning {pj('runs', d)} ... ")
             shutil.rmtree(pj('runs', d))
@@ -74,7 +74,7 @@ def main():
     filename = os.path.join("./runs",
                             f"{cur_time.hour:02d}-{cur_time.minute:02d}--"
                             f"{cur_time.month:02d}-{cur_time.day:02d}.log")
-    cleanup_failed_runs()
+    # cleanup_failed_runs()
 
     with PrintToConsole(filename):
         import isaacgym

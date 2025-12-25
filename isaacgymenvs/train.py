@@ -114,17 +114,20 @@ def launch_rlg_hydra(cfg: DictConfig):
 
     def create_isaacgym_env(**kwargs):
         envs = isaacgymenvs.make(
-            cfg.seed, 
-            cfg.task_name, 
-            cfg.task.env.numEnvs, 
-            cfg.sim_device,
-            cfg.rl_device,
-            cfg.graphics_device_id,
-            cfg.headless,
-            cfg.multi_gpu,
-            cfg.capture_video,
-            cfg.force_render,
-            cfg,
+            seed=cfg.seed, 
+            task=cfg.task_name, 
+            num_envs=cfg.task.env.numEnvs, 
+            sim_device=cfg.sim_device,
+            rl_device=cfg.rl_device,
+            graphics_device_id=cfg.graphics_device_id,
+            headless=cfg.headless,
+            # headless=True,
+            multi_gpu=cfg.multi_gpu,
+            virtual_screen_capture=cfg.capture_video,
+            # virtual_screen_capture=True,
+            force_render=cfg.force_render,
+            # force_render=True,
+            cfg=cfg,
             **kwargs,
         )
         if cfg.capture_video:
