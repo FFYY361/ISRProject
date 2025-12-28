@@ -29,9 +29,9 @@ class WandbAlgoObserver(AlgoObserver):
         def init_wandb():
             wandb.init(
                 project=cfg.wandb_project,
-                #entity=cfg.wandb_entity,
-                #group=cfg.wandb_group,
-                #tags=cfg.wandb_tags,
+                entity=cfg.wandb_entity if cfg.wandb_entity else None,
+                group=cfg.wandb_group if cfg.wandb_group else None,
+                tags=cfg.wandb_tags if cfg.wandb_tags else None,
                 sync_tensorboard=True,
                 name=experiment_name,
                 #resume=False,

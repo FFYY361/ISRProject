@@ -1,0 +1,31 @@
+<?xml version="1.0" ?>
+<robot name="soccer_ball" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <link name="ball">
+    <inertial>
+      <!-- 标准足球质量约0.43kg，半径约0.11m -->
+      <mass value="0.43"/>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <!-- 球体的转动惯量：I = (2/5) * m * r^2 -->
+      <!-- 对于半径0.11m，质量0.43kg的球：I = (2/5) * 0.43 * 0.11^2 ≈ 0.00208 -->
+      <inertia ixx="0.00208" ixy="0" ixz="0" iyy="0.00208" iyz="0" izz="0.00208"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <!-- 标准足球半径约0.11米（直径22厘米） -->
+        <sphere radius="0.11"/>
+      </geometry>
+      <material name="White">
+        <!-- 白色足球，后续可以添加纹理 -->
+        <color rgba="0.95 0.95 0.95 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <sphere radius="0.11"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
+

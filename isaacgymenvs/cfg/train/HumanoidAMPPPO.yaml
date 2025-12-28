@@ -92,4 +92,4 @@ params:
 
     task_reward_w: 1.0
     disc_reward_w: 1.0
-    reward_combine: 'mul'  # mul or add
+    reward_combine: 'add'  # mul or add

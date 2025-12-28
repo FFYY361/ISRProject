@@ -127,7 +127,125 @@ class AMPAgent(a2c_continuous.A2CAgent):
 
     def set_stats_weights(self, weights):
         super().set_stats_weights(weights)
-        if self._normalize_amp_input: self._amp_input_mean_std.load_state_dict(weights['amp_input_mean_std'])
+        if self._normalize_amp_input:
+            checkpoint_amp_mean_std = weights.get('amp_input_mean_std', None)
+            if checkpoint_amp_mean_std is not None:
+                # 处理观测空间尺寸变化的情况（例如从105维扩展到111维）
+                current_size = self._amp_input_mean_std.running_mean.shape[0]
+                checkpoint_size = checkpoint_amp_mean_std['running_mean'].shape[0]
+                
+                if current_size == checkpoint_size:
+                    # 尺寸匹配，直接加载
+                    self._amp_input_mean_std.load_state_dict(checkpoint_amp_mean_std)
+                elif current_size > checkpoint_size:
+                    # 当前模型尺寸更大（例如从105维扩展到111维），只加载兼容部分
+                    print(f"Warning: Observation size mismatch. Checkpoint has {checkpoint_size} dims, "
+                          f"current model has {current_size} dims. Loading compatible part only.")
+                    # 创建部分匹配的state_dict
+                    partial_state_dict = {}
+                    for key in ['running_mean', 'running_var', 'count']:
+                        if key in checkpoint_amp_mean_std:
+                            checkpoint_value = checkpoint_amp_mean_std[key]
+                            current_value = self._amp_input_mean_std.state_dict()[key]
+                            # 只复制兼容的部分
+                            partial_state_dict[key] = current_value.clone()
+                            partial_state_dict[key][:checkpoint_size] = checkpoint_value
+                    self._amp_input_mean_std.load_state_dict(partial_state_dict)
+                else:
+                    # 当前模型尺寸更小，这种情况不应该发生，但给出警告
+                    print(f"Warning: Checkpoint observation size ({checkpoint_size}) is larger than "
+                          f"current model size ({current_size}). This may cause issues.")
+                    # 尝试加载兼容部分
+                    partial_state_dict = {}
+                    for key in ['running_mean', 'running_var', 'count']:
+                        if key in checkpoint_amp_mean_std:
+                            checkpoint_value = checkpoint_amp_mean_std[key]
+                            partial_state_dict[key] = checkpoint_value[:current_size]
+                    self._amp_input_mean_std.load_state_dict(partial_state_dict)
+
+    def set_full_state_weights(self, weights, set_epoch=True):
+        if 'model' in weights:
+            model_state_dict = weights['model']
+            checkpoint_obs_size = None
+            current_obs_size = None
+            
+            # 获取checkpoint的观测空间大小
+            if 'running_mean_std.running_mean' in model_state_dict:
+                checkpoint_obs_size = model_state_dict['running_mean_std.running_mean'].shape[0]
+            
+            # 从当前模型获取观测空间大小
+            if hasattr(self.model, 'running_mean_std') and hasattr(self.model.running_mean_std, 'running_mean'):
+                current_obs_size = self.model.running_mean_std.running_mean.shape[0]
+            else:
+                # 如果模型还没有初始化running_mean_std，从obs_shape获取
+                if hasattr(self, 'obs_shape'):
+                    if isinstance(self.obs_shape, (list, tuple)):
+                        current_obs_size = self.obs_shape[0] if len(self.obs_shape) > 0 else checkpoint_obs_size
+                    else:
+                        current_obs_size = self.obs_shape
+                else:
+                    current_obs_size = checkpoint_obs_size
+            
+            # 如果观测空间尺寸不匹配，需要调整
+            if checkpoint_obs_size is not None and current_obs_size is not None and checkpoint_obs_size != current_obs_size:
+                print(f"Warning: Model observation size mismatch. Checkpoint has {checkpoint_obs_size} dims, "
+                      f"current model has {current_obs_size} dims. Adjusting weights...")
+                
+                if current_obs_size > checkpoint_obs_size:
+                    # 当前模型尺寸更大，扩展checkpoint的值
+                    # 1. 处理running_mean_std
+                    for key in ['running_mean_std.running_mean', 'running_mean_std.running_var']:
+                        if key in model_state_dict:
+                            checkpoint_value = model_state_dict[key]
+                            # 创建新的张量，用零填充
+                            new_value = torch.zeros(current_obs_size, device=checkpoint_value.device, dtype=checkpoint_value.dtype)
+                            new_value[:checkpoint_obs_size] = checkpoint_value
+                            model_state_dict[key] = new_value
+                    
+                    # 2. 处理网络层权重（Actor和Critic的第一层）
+                    # 查找所有以.0.weight结尾的键（通常是第一层），且输入维度匹配checkpoint_obs_size
+                    keys_to_adjust = []
+                    for key in model_state_dict.keys():
+                        if key.endswith('.0.weight'):
+                            weight = model_state_dict[key]
+                            # 检查是否是输入层（第二维度匹配观测空间）
+                            if len(weight.shape) == 2 and weight.shape[1] == checkpoint_obs_size:
+                                keys_to_adjust.append(key)
+                    
+                    # 扩展这些层的权重矩阵
+                    for key in keys_to_adjust:
+                        checkpoint_weight = model_state_dict[key]
+                        # 创建新的权重矩阵，新增的列用零初始化
+                        new_weight = torch.zeros(checkpoint_weight.shape[0], current_obs_size, 
+                                                device=checkpoint_weight.device, dtype=checkpoint_weight.dtype)
+                        new_weight[:, :checkpoint_obs_size] = checkpoint_weight
+                        model_state_dict[key] = new_weight
+                        print(f"  Adjusted {key}: {checkpoint_weight.shape} -> {new_weight.shape}")
+                
+                else:
+                    # 当前模型尺寸更小，截断checkpoint的值
+                    # 1. 处理running_mean_std
+                    for key in ['running_mean_std.running_mean', 'running_mean_std.running_var']:
+                        if key in model_state_dict:
+                            checkpoint_value = model_state_dict[key]
+                            model_state_dict[key] = checkpoint_value[:current_obs_size]
+                    
+                    # 2. 处理网络层权重
+                    keys_to_adjust = []
+                    for key in model_state_dict.keys():
+                        if key.endswith('.0.weight'):
+                            weight = model_state_dict[key]
+                            if len(weight.shape) == 2 and weight.shape[1] > current_obs_size:
+                                keys_to_adjust.append(key)
+                    
+                    for key in keys_to_adjust:
+                        checkpoint_weight = model_state_dict[key]
+                        new_weight = checkpoint_weight[:, :current_obs_size]
+                        model_state_dict[key] = new_weight
+                        print(f"  Adjusted {key}: {checkpoint_weight.shape} -> {new_weight.shape}")
+        
+        # 调用父类方法加载权重
+        super().set_full_state_weights(weights, set_epoch=set_epoch)
 
     def play_steps(self):
         self.set_eval()

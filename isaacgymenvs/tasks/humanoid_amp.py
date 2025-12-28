@@ -144,11 +144,45 @@ class HumanoidAMP(HumanoidAMPBase):
         return
 
     def reset_idx(self, env_ids):
+        # Filter invalid indices on CPU safely to avoid CUDA illegal memory access
+        if len(env_ids) == 0:
+            return
+        
+        # Move to CPU for validation
+        if env_ids.device.type == 'cuda':
+            env_ids_cpu = env_ids.cpu().long()
+        else:
+            env_ids_cpu = env_ids.long()
+        
+        # Filter invalid indices on CPU
+        valid_mask = (env_ids_cpu >= 0) & (env_ids_cpu < self.num_envs)
+        env_ids_cpu = env_ids_cpu[valid_mask]
+        if len(env_ids_cpu) == 0:
+            return
+        
+        # Move back to correct device and ensure it is long type and contiguous
+        env_ids = env_ids_cpu.to(self.device).long().contiguous()
         super().reset_idx(env_ids)
         self._init_amp_obs(env_ids)
         return
 
     def _reset_actors(self, env_ids):
+        if len(env_ids) == 0:
+            return
+
+        if env_ids.device.type == 'cuda':
+            env_ids_cpu = env_ids.cpu().long()
+        else:
+            env_ids_cpu = env_ids.long()
+        
+        # Filter invalid indices on CPU
+        valid_mask = (env_ids_cpu >= 0) & (env_ids_cpu < self.num_envs)
+        env_ids_cpu = env_ids_cpu[valid_mask]
+        if len(env_ids_cpu) == 0:
+            return
+
+        env_ids = env_ids_cpu.to(self.device).long().contiguous()
+        
         if (self._state_init == HumanoidAMP.StateInit.Default):
             self._reset_default(env_ids)
         elif (self._state_init == HumanoidAMP.StateInit.Start
@@ -159,6 +193,10 @@ class HumanoidAMP(HumanoidAMPBase):
         else:
             assert(False), "Unsupported state initialization strategy: {:s}".format(str(self._state_init))
 
+        if env_ids.device.type == 'cuda':
+            torch.cuda.synchronize()
+        
+        # Set buffers (env_ids have been verified on CPU and are safe)
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
         self._terminate_buf[env_ids] = 0
@@ -169,12 +207,48 @@ class HumanoidAMP(HumanoidAMPBase):
         self._dof_pos[env_ids] = self._initial_dof_pos[env_ids]
         self._dof_vel[env_ids] = self._initial_dof_vel[env_ids]
 
-        env_ids_int32 = env_ids.to(dtype=torch.int32)
-        self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._initial_root_states),
-                                                     gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        if self._has_ball_asset:
+            num_actors_per_env = 2  # humanoid + ball
+            humanoid_actor_indices = env_ids * num_actors_per_env
+            all_root_states = gymtorch.wrap_tensor(self._actor_root_state_tensor)
+            
+            # Ensure humanoid_actor_indices is contiguous (avoid CUDA illegal memory access)
+            humanoid_actor_indices = humanoid_actor_indices.contiguous()
+            
+            all_root_states[humanoid_actor_indices] = self._initial_root_states[env_ids]
 
-        self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._dof_state),
-                                              gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+            ball_actor_indices = env_ids * num_actors_per_env + 1
+            
+            # Ensure ball_actor_indices is contiguous (avoid CUDA illegal memory access)
+            ball_actor_indices = ball_actor_indices.contiguous()
+            
+            ball_initial_states = all_root_states[ball_actor_indices].clone()
+            # ball_initial_states[:, 0:3] = self._initial_root_states[env_ids, 0:3] + torch.tensor([0.8, 0.0, 0.11], device=self.device)
+            ball_initial_states[:, 0] = self._initial_root_states[env_ids, 0] + 0.8
+            ball_initial_states[:, 1] = self._initial_root_states[env_ids, 1] + 0.0
+            ball_initial_states[:, 2] = 0.11
+            ball_initial_states[:, 3:7] = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device)
+            ball_initial_states[:, 7:13] = 0
+            all_root_states[ball_actor_indices] = ball_initial_states
+            
+            # Synchronize CUDA to ensure updates to all_root_states are written to _actor_root_state_tensor
+            torch.cuda.synchronize(device=self.device)
+            
+            # Ensure indices are of the correct type and sorted (although order is usually not important, for safety)
+            all_actor_indices = torch.cat([humanoid_actor_indices, ball_actor_indices]).to(dtype=torch.int32).contiguous()
+            
+            env_ids_int32 = env_ids.to(dtype=torch.int32).contiguous()
+            
+            self.gym.set_actor_root_state_tensor_indexed(self.sim, self._actor_root_state_tensor,
+                                                         gymtorch.unwrap_tensor(all_actor_indices), len(all_actor_indices))
+            self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._dof_state),
+                                                  gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        else:
+            env_ids_int32 = env_ids.to(dtype=torch.int32).contiguous()
+            self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._initial_root_states),
+                                                         gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+            self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._dof_state),
+                                                  gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
         self._reset_default_env_ids = env_ids
         return
@@ -205,6 +279,7 @@ class HumanoidAMP(HumanoidAMPBase):
         self._reset_ref_env_ids = env_ids
         self._reset_ref_motion_ids = motion_ids
         self._reset_ref_motion_times = motion_times
+        
         return
 
     def _reset_hybrid_state_init(self, env_ids):
@@ -265,10 +340,73 @@ class HumanoidAMP(HumanoidAMPBase):
         self._dof_vel[env_ids] = dof_vel
 
         env_ids_int32 = env_ids.to(dtype=torch.int32)
-        self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._root_states), 
-                                                    gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        
+        # If there is a ball, need to update the state of all actors (humanoid + ball)
+        if self._has_ball_asset:
+            num_actors_per_env = 2  # humanoid + ball
+            humanoid_actor_indices = env_ids * num_actors_per_env
+            all_root_states = gymtorch.wrap_tensor(self._actor_root_state_tensor)
+            
+            # Validate index range to ensure no out-of-bounds access
+            max_valid_index = all_root_states.shape[0] - 1
+            max_humanoid_index = humanoid_actor_indices.max().cpu().item() if len(humanoid_actor_indices) > 0 else -1
+            if max_humanoid_index > max_valid_index:
+                raise ValueError(f"Humanoid actor index {max_humanoid_index} exceeds maximum valid index {max_valid_index} (all_root_states shape: {all_root_states.shape}, num_envs: {self.num_envs})")
+            
+            # Ensure humanoid_actor_indices is contiguous (avoid CUDA illegal memory access)
+            humanoid_actor_indices = humanoid_actor_indices.contiguous()
+            
+            # Use clone-then-assign pattern (consistent with ball handling in _reset_default) to avoid CUDA illegal memory access
+            # Direct assignment to slices of advanced indexing may be unsafe on CUDA
+            humanoid_states = all_root_states[humanoid_actor_indices].clone()
+            humanoid_states[:, 0:3] = root_pos
+            humanoid_states[:, 3:7] = root_rot
+            humanoid_states[:, 7:10] = root_vel
+            humanoid_states[:, 10:13] = root_ang_vel
+            all_root_states[humanoid_actor_indices] = humanoid_states
+            
+
+            ball_actor_indices = env_ids * num_actors_per_env + 1
+            ball_actor_indices = ball_actor_indices.contiguous()
+            
+            ball_states = all_root_states[ball_actor_indices].clone()
+
+            # ball_states[:, 0:3] = root_pos + torch.tensor([0.8, 0.0, 0.11], device=self.device)
+            # Hardcode ball Z to 0.11 (radius) to ensure it starts on the ground
+            ball_states[:, 0] = root_pos[:, 0] + 0.8
+            ball_states[:, 1] = root_pos[:, 1] + 0.0
+            ball_states[:, 2] = 0.11
+            ball_states[:, 3:7] = torch.tensor([0.0, 0.0, 0.0, 1.0], device=self.device)  # Unit quaternion
+            ball_states[:, 7:13] = 0  # Zero velocity
+            
+            all_root_states[ball_actor_indices] = ball_states
+            
+
+            all_actor_indices = torch.cat([humanoid_actor_indices, ball_actor_indices]).to(dtype=torch.int32).contiguous()
+            
+            # Synchronize CUDA to ensure writing to all_root_states is completed, and all_actor_indices is also converted
+            torch.cuda.synchronize(device=self.device)
+            
+            self.gym.set_actor_root_state_tensor_indexed(self.sim, self._actor_root_state_tensor,
+                                                         gymtorch.unwrap_tensor(all_actor_indices), len(all_actor_indices))
+            
+            # Synchronize CUDA to catch possible asynchronous errors
+            torch.cuda.synchronize(device=self.device)
+        else:
+            self.gym.set_actor_root_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._root_states), 
+                                                        gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+        
+        if self._has_ball_asset:
+            # If there is a ball, must use humanoid actor indices instead of environment indices
+            # Because environment indices (0,1,2...) would correspond to Actor (0,1,2...), where Actor 1 is the ball and has no DOF
+            dof_indices = humanoid_actor_indices.to(dtype=torch.int32).contiguous()
+        else:
+            dof_indices = env_ids_int32
+
         self.gym.set_dof_state_tensor_indexed(self.sim, gymtorch.unwrap_tensor(self._dof_state),
-                                                    gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
+                                                    gymtorch.unwrap_tensor(dof_indices), len(dof_indices))
+        
+        torch.cuda.synchronize(device=self.device)
         return
 
     def _update_hist_amp_obs(self, env_ids=None):

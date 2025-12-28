@@ -51,7 +51,37 @@ class AMPPlayerContinuous(common_player.CommonPlayer):
         super().restore(fn)
         if self._normalize_amp_input:
             checkpoint = torch_ext.load_checkpoint(fn)
-            self._amp_input_mean_std.load_state_dict(checkpoint['amp_input_mean_std'])
+            checkpoint_amp_mean_std = checkpoint.get('amp_input_mean_std', None)
+            if checkpoint_amp_mean_std is not None:
+                current_size = self._amp_input_mean_std.running_mean.shape[0]
+                checkpoint_size = checkpoint_amp_mean_std['running_mean'].shape[0]
+                
+                if current_size == checkpoint_size:
+                    self._amp_input_mean_std.load_state_dict(checkpoint_amp_mean_std)
+                elif current_size > checkpoint_size:
+                    print(f"Warning: AMP observation size mismatch. Checkpoint has {checkpoint_size} dims, "
+                          f"current model has {current_size} dims. Loading compatible part only.")
+                    # 创建部分匹配的state_dict
+                    partial_state_dict = {}
+                    for key in ['running_mean', 'running_var', 'count']:
+                        if key in checkpoint_amp_mean_std:
+                            checkpoint_value = checkpoint_amp_mean_std[key]
+                            current_value = self._amp_input_mean_std.state_dict()[key]
+                            # 只复制兼容的部分
+                            partial_state_dict[key] = current_value.clone()
+                            partial_state_dict[key][:checkpoint_size] = checkpoint_value
+                    self._amp_input_mean_std.load_state_dict(partial_state_dict)
+                else:
+                    # 当前模型尺寸更小，这种情况不应该发生，但给出警告
+                    print(f"Warning: Checkpoint AMP observation size ({checkpoint_size}) is larger than "
+                          f"current model size ({current_size}). This may cause issues.")
+                    # 尝试加载兼容部分
+                    partial_state_dict = {}
+                    for key in ['running_mean', 'running_var', 'count']:
+                        if key in checkpoint_amp_mean_std:
+                            checkpoint_value = checkpoint_amp_mean_std[key]
+                            partial_state_dict[key] = checkpoint_value[:current_size]
+                    self._amp_input_mean_std.load_state_dict(partial_state_dict)
         return
     
     def _build_net(self, config):
