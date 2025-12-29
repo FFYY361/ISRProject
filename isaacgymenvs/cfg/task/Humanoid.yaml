@@ -37,7 +37,7 @@ env:
     restitution: 0.0
 
   # set to True if you use camera sensors in the environment
-  enableCameraSensors: False
+  enableCameraSensors: True
 
 sim:
   dt: 0.0166 # 1/60 s

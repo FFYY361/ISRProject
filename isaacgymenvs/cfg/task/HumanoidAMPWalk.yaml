@@ -5,7 +5,7 @@ physics_engine: ${..physics_engine}
 
 # if given, will override the device setting in gym.
 env: 
-  numEnvs: ${resolve_default:2048,${...num_envs}}  # 大幅增加环境数量以提高GPU利用率（如果OOM可降至8192或4096）
+  numEnvs: ${resolve_default:4096,${...num_envs}}  # 大幅增加环境数量以提高GPU利用率（如果OOM可降至8192或4096）
   envSpacing: 5
   episodeLength: 300
   cameraFollow: True 
@@ -20,7 +20,7 @@ env:
 
   localRootObs: False
   contactBodies: ["right_foot", "left_foot"]
-  terminationHeight: 0.5
+  terminationHeight: 0.1
   enableEarlyTermination: True
 
   # animation files to learn from
@@ -29,11 +29,12 @@ env:
   # 也可以使用walk_run组合动作文件
   # motion_file: "amp_humanoid_walk_run.yaml"
 
-  task_speed: 2.5  # 1.5 ~ 3.5
+  task_speed: 1.5  # 1.5 ~ 3.5
   task_speed_mul: 1.0
 
   # 不加载球体（用于第一阶段walk训练）
-  enableBall: False
+  enableBall: True
+  enableBallReward: False
 
   asset:
     assetFileName: "mjcf/amp_humanoid.xml"

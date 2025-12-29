@@ -218,6 +218,7 @@ class HumanoidAMPBase(VecTask):
         # Decide whether to load ball asset based on config (for ball environment)
         # Default is not to load ball, only load when explicitly specified in config
         self._has_ball_asset = self.cfg["env"].get("enableBall", False)
+        self._enable_ball_reward = self.cfg["env"].get("enableBallReward", self._has_ball_asset)
         ball_asset_count = 0
         
         if self._has_ball_asset:
@@ -381,13 +382,17 @@ class HumanoidAMPBase(VecTask):
             self.task_speed_mul,
             self._root_states,
             ball_root_states,
-            foot_contact_forces
+            foot_contact_forces,
+            self._enable_ball_reward
         )
         return
 
     def _compute_reset(self):
+        contact_body_ids = self._contact_body_ids
+        if self._has_ball_asset:
+            contact_body_ids = torch.cat((contact_body_ids, self._ball_body_ids), dim=-1)
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf,
-                                                   self._contact_forces, self._contact_body_ids,
+                                                   self._contact_forces, contact_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
                                                    self._enable_early_termination, self._termination_height)
         return
@@ -843,10 +848,34 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     
     return obs
 
+
+
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ball_root_states, foot_contact_forces):
-    # type: (Tensor, float, float, Tensor, Tensor, Tensor) -> Tensor
+def compute_AMP_ball_reward(tgt_vel, root_pos, root_vel, ball_pos, ball_vel):
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor) -> Tensor
+
+    # print(f"root pos:{root_pos}, ball pos:{ball_pos}, root vel:{root_vel}, ball vel:{ball_vel}, tgt vel:{tgt_vel}")
+
+
+    tgt_dir = torch.zeros_like(tgt_vel)
+    tgt_dir[..., 0] = 1.0
+    tgt_vel_mag = torch.norm(tgt_vel)
+    ball_rel_pos = ball_pos - root_pos
+    ball_rel_dir = ball_rel_pos / (torch.norm(ball_rel_pos, dim=1, keepdim=True) + 1e-6)
+    rwd_cv = torch.exp(-1.5 * (torch.clamp(tgt_vel_mag - torch.sum(root_vel * ball_rel_dir, dim=1), min=0.0)**2))
+    rwd_cp = torch.exp(-0.5 * (torch.norm(ball_rel_pos, dim=1) ** 2))
+    rwd_bv = torch.exp(-1.0 * ((tgt_vel_mag - torch.sum(ball_vel * tgt_dir, dim=1))**2))
+
+    reward = 0.0 * rwd_cv + 0.9 * rwd_cp + 0.1 * rwd_bv
+    return reward
+
+
+
+@torch.jit.script
+def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ball_root_states, foot_contact_forces, enable_ball_reward):
+    # type: (Tensor, float, float, Tensor, Tensor, Tensor, bool) -> Tensor
     
+
     root_local_x_speed = obs_buf[:, 7]
     speed_rwd = torch.exp(-(root_local_x_speed - task_speed)**2.0) * task_speed_mul  # Default speed reward
     
@@ -857,8 +886,16 @@ def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ba
     # Check if ball_root_states is zero (by checking if position is all zeros)
     ball_pos = ball_root_states[:, 0:3]
     ball_has_data = torch.any(torch.abs(ball_pos) > 1e-6, dim=1)
+
     
-    if torch.any(ball_has_data):
+    if enable_ball_reward:
+        return compute_AMP_ball_reward(
+            tgt_vel=torch.tensor([task_speed, 0.0, 0.0], device=root_states.device),
+            root_pos = root_states[:, 0:3],
+            root_vel = root_states[:, 7:10],
+            ball_pos = ball_root_states[:, 0:3],
+            ball_vel = ball_root_states[:, 7:10],
+        )
         root_pos = root_states[:, 0:3]
         root_rot = root_states[:, 3:7]
         root_vel = root_states[:, 7:10]
@@ -877,10 +914,18 @@ def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ba
         
         # Calculate speed reward based on velocity towards ball
         # If ball exists, overwrite the default local-x speed reward with this one
-        speed_towards_ball_rwd = torch.exp(-(vel_towards_ball - task_speed)**2.0) * task_speed_mul
+        speed_towards_ball_rwd = torch.exp(-(vel_towards_ball - task_speed)**2.0)
         
         # Only apply this modified reward where ball data exists
-        reward = torch.where(ball_has_data, speed_towards_ball_rwd, speed_rwd)
+        # speed_toball_rwd = torch.where(ball_has_data, speed_towards_ball_rwd, speed_rwd)
+        speed_toball_rwd = speed_towards_ball_rwd
+
+        ball_vel_x = ball_vel[:, 0]
+        speed_ball_rwd = torch.exp(-(ball_vel_x - task_speed)**2.0)
+
+        dir_rwd = vel_towards_ball / (torch.norm(root_vel[:, 0:2], dim=1) + 1e-6)
+
+
 
         # Calculate ball relative position (in local coordinate system)
         heading_rot = calc_heading_quat_inv(root_rot)
@@ -896,11 +941,12 @@ def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ba
         ideal_range = (ideal_max_dist - ideal_min_dist) / 2.0
         
         # Use Gaussian function to give high reward in ideal range
-        distance_rwd = torch.exp(-((ball_distance - ideal_center) / ideal_range)**2.0) * 0.5
+        distance_rwd = torch.exp(-((ball_distance - ideal_center) / ideal_range)**2.0)
 
         # If distance is too far (>2m), give penalty
-        far_penalty = torch.where(ball_distance > 2.0, -0.1 * (ball_distance - 2.0), torch.zeros_like(ball_distance))
-        distance_rwd = distance_rwd + far_penalty
+        far_penalty = torch.where(ball_distance > 2.0, -((ball_distance - 2.0) / 2.0) ** 2, torch.zeros_like(ball_distance))
+        far_penalty = torch.clamp(far_penalty, min=-1.0, max=0.0)
+        # distance_rwd = distance_rwd + far_penalty
         
         # 2. Directional Consistency: Encourage ball movement direction to match human forward direction
         local_root_vel = my_quat_rotate(heading_rot, root_vel)
@@ -919,32 +965,55 @@ def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ba
         
         # Direction consistency: dot product of two direction vectors
         direction_consistency = root_forward_dir * ball_forward_dir
-        direction_rwd = direction_consistency.squeeze() * 0.3
+        direction_rwd = direction_consistency.squeeze()
         
         # 3. Contact Penalty/Bonus: Foot contacts ball and ball moves towards target direction
         contact_bonus = torch.zeros_like(ball_distance)
         if foot_contact_forces is not None:
             # Check if feet have contact (contact force threshold)
-            contact_threshold = 5.0  # 10N
+            foot_contact_forces = foot_contact_forces[..., 0:2]  # Use only XY components
+            contact_threshold = 1.0  # 10N
             foot_contact_magnitude = torch.norm(foot_contact_forces, dim=2)  # [num_envs, 2]
             has_foot_contact = torch.any(foot_contact_magnitude > contact_threshold, dim=1)
-            
+            # print(foot_contact_forces)
             # If feet contact and ball moves forward, give reward
             ball_moving_forward = ball_forward_dir.squeeze() > 0.1
+            # contact_bonus = torch.where(
+            #     torch.logical_and(has_foot_contact, ball_moving_forward),
+            #     0.2 * ball_forward_dir.squeeze(),
+            #     torch.zeros_like(ball_distance)
+            # )
             contact_bonus = torch.where(
-                torch.logical_and(has_foot_contact, ball_moving_forward),
-                0.2 * ball_forward_dir.squeeze(),
+                has_foot_contact,
+                1.0,
                 torch.zeros_like(ball_distance)
             )
         
         # Apply mask, only apply rewards to environments with balls
-        distance_rwd = torch.where(ball_has_data, distance_rwd, torch.zeros_like(distance_rwd))
-        direction_rwd = torch.where(ball_has_data, direction_rwd, torch.zeros_like(direction_rwd))
-        contact_bonus = torch.where(ball_has_data, contact_bonus, torch.zeros_like(contact_bonus))
+        # distance_rwd = torch.where(ball_has_data, distance_rwd, torch.zeros_like(distance_rwd))
+        # direction_rwd = torch.where(ball_has_data, direction_rwd, torch.zeros_like(direction_rwd))
+        # contact_bonus = torch.where(ball_has_data, contact_bonus, torch.zeros_like(contact_bonus))
         
-        reward = reward + distance_rwd + direction_rwd + contact_bonus
+        coef_speed_toball = 0.1
+        coef_speed_ball = 0.5
+        coef_dist =  1.0
+        coef_dir = 1.0
+        coef_penalty = 1.0
+        coef_contact = 1.0
+        reward =    coef_speed_toball * speed_toball_rwd + \
+                    coef_dist * distance_rwd + \
+                    coef_penalty * far_penalty + \
+                    coef_contact * contact_bonus + \
+                    coef_speed_ball * speed_ball_rwd + \
+                    coef_dir * dir_rwd
     
     return reward
+
+
+
+
+
+
 
 @torch.jit.script
 def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
@@ -964,6 +1033,7 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
         fall_height = torch.any(fall_height, dim=-1)
 
         has_fallen = torch.logical_and(fall_contact, fall_height)
+        # has_fallen = fall_height
 
         # first timestep can sometimes still have nonzero contact forces
         # so only check after first couple of steps

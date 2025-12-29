@@ -33,8 +33,9 @@ env:
   # these motions should use hyperparameters from HumanoidAMPPPOLowGP.yaml
   #motion_file: "amp_humanoid_hop.npy"
   #motion_file: "amp_humanoid_backflip.npy"
-  task_speed: 2.5  # 1.5 ~ 3.5
+  task_speed: 0.0  # 1.5 ~ 3.5
   task_speed_mul: 1.0
+  # enableCameraSensors: True
 
   asset:
     assetFileName: "mjcf/amp_humanoid.xml"

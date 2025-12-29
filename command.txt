@@ -1,6 +1,6 @@
 runs/HumanoidAMP_23-21-59-30/nn
 export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
-python launch.py task=HumanoidAMP headless=True test=True num_envs=1 checkpoint=runs/HumanoidAMP_23-21-59-30/nn/HumanoidAMP_23-21-59-44_1000.pth capture_video=True
+python launch.py task=HumanoidAMP headless=True test=True num_envs=1 checkpoint=runs/HumanoidAMP_25-10-14-45/nn/HumanoidAMP_25-10-15-00_3000.pth capture_video=True
 
 python launch.py task=HumanoidAMP headless=True
 

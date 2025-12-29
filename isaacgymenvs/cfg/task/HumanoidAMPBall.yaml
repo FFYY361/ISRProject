@@ -20,18 +20,19 @@ env:
 
   localRootObs: False
   contactBodies: ["right_foot", "left_foot"]
-  terminationHeight: 0.5
+  terminationHeight: 0.25
   enableEarlyTermination: True
 
   # animation files to learn from
-  motion_file: "amp_humanoid_walk.npy"
-  # motion_file: "amp_humanoid_run.npy"
+  # motion_file: "amp_humanoid_walk.npy"
+  motion_file: "amp_humanoid_run.npy"
 
-  task_speed: 2.0  # 带球时速度可以稍慢一些
+  task_speed: 1.5  # 带球时速度可以稍慢一些
   task_speed_mul: 1.0
 
   # 加载球体（用于第二阶段带球训练）
   enableBall: True
+  enableBallReward: True
 
   asset:
     assetFileName: "mjcf/amp_humanoid.xml"
