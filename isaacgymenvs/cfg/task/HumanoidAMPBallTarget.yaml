@@ -33,6 +33,7 @@ env:
   # 加载球体（用于第二阶段带球训练）
   enableBall: True
   enableBallReward: True
+  enableTarget: True  # 启用 Target
 
   asset:
     assetFileName: "mjcf/amp_humanoid.xml"

@@ -30,6 +30,8 @@
 import numpy as np
 import os
 import torch
+from torch import Tensor
+from typing import Tuple, Optional
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
@@ -42,9 +44,11 @@ DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
 # Observation size
 # Original: 13 (root) + 52 (dof_pos) + 28 (dof_vel) + 12 (key_body_pos) = 105
-# Added ball info: +3 (ball rel pos) + 3 (ball lin vel) = +6
-# Optional: +1 (foot contact feedback) = +1
-NUM_OBS = 13 + 52 + 28 + 12 + 6 # [root_h, root_rot, root_vel, root_ang_vel, dof_pos, dof_vel, key_body_pos, ball_rel_pos, ball_vel]
+# Added ball info: 
+#   Ball state: pos(3) + rot(4) + lin_vel(3) + ang_vel(3) = 13
+#   Target: rel_pos(3) = 3
+# Total added: 16
+NUM_OBS = 13 + 52 + 28 + 12 + 13 + 3 
 NUM_ACTIONS = 28
 
 
@@ -105,10 +109,7 @@ class HumanoidAMPBase(VecTask):
         self.gym.refresh_net_contact_force_tensor(self.sim)
 
         all_root_states = gymtorch.wrap_tensor(self._actor_root_state_tensor)
-        
-        # If there is a ball, each environment has 2 actors (humanoid and ball), need to extract only humanoid state
-        # actor root state tensor structure: env0_actor0, env0_actor1, env1_actor0, env1_actor1, ...
-        # So humanoid state is taken every num_actors_per_env
+
         if self._has_ball_asset:
             num_actors_per_env = 2  # humanoid + ball
             # Extract state of the first actor (humanoid) in each environment
@@ -145,6 +146,8 @@ class HumanoidAMPBase(VecTask):
         self._rigid_body_ang_vel = self._rigid_body_state.view(self.num_envs, self.num_bodies, 13)[..., 10:13]
         self._contact_forces = gymtorch.wrap_tensor(contact_force_tensor).view(self.num_envs, self.num_bodies, 3)
         
+        self._target_states = torch.zeros((self.num_envs, 3), device=self.device, dtype=torch.float)
+
         self._terminate_buf = torch.ones(self.num_envs, device=self.device, dtype=torch.long)
         if self.viewer != None:
             self._init_camera()
@@ -174,8 +177,32 @@ class HumanoidAMPBase(VecTask):
 
     def reset_idx(self, env_ids):
         self._reset_actors(env_ids)
+        self._reset_env_tensors(env_ids)
         self._refresh_sim_tensors()
         self._compute_observations(env_ids)
+        return
+
+    def _reset_env_tensors(self, env_ids):
+        n = len(env_ids)
+        if n > 0:
+            dist = 5.0 + 5.0 * torch.rand(n, device=self.device)
+            angle = (torch.rand(n, device=self.device) - 0.5) * np.pi / 2
+
+            root_pos = self._root_states[env_ids, 0:3]
+            root_rot = self._root_states[env_ids, 3:7]
+            
+            heading_rot = calc_heading_quat_inv(root_rot)
+            target_local_pos = torch.zeros((n, 3), device=self.device)
+            target_local_pos[:, 0] = dist * torch.cos(angle)
+            target_local_pos[:, 1] = dist * torch.sin(angle)
+            
+            heading_rot_inv = calc_heading_quat_inv(root_rot)
+            heading_rot = heading_rot_inv.clone()
+            heading_rot[:, 0:3] = -heading_rot[:, 0:3]
+            
+            target_global_offset = my_quat_rotate(heading_rot, target_local_pos)
+            self._target_states[env_ids, :3] = root_pos + target_global_offset
+            
         return
 
     def set_char_color(self, col):
@@ -219,6 +246,7 @@ class HumanoidAMPBase(VecTask):
         # Default is not to load ball, only load when explicitly specified in config
         self._has_ball_asset = self.cfg["env"].get("enableBall", False)
         self._enable_ball_reward = self.cfg["env"].get("enableBallReward", self._has_ball_asset)
+        self._enable_target = self.cfg["env"].get("enableTarget", True)
         ball_asset_count = 0
         
         if self._has_ball_asset:
@@ -383,18 +411,27 @@ class HumanoidAMPBase(VecTask):
             self._root_states,
             ball_root_states,
             foot_contact_forces,
-            self._enable_ball_reward
+            self._target_states,
+            self._enable_ball_reward,
+            self._enable_target
         )
         return
 
     def _compute_reset(self):
         contact_body_ids = self._contact_body_ids
+        ball_root_states = None
+        target_states = None
+        
         if self._has_ball_asset:
             contact_body_ids = torch.cat((contact_body_ids, self._ball_body_ids), dim=-1)
+            ball_root_states = self._ball_root_states
+            target_states = self._target_states
+            
         self.reset_buf[:], self._terminate_buf[:] = compute_humanoid_reset(self.reset_buf, self.progress_buf,
                                                    self._contact_forces, contact_body_ids,
                                                    self._rigid_body_pos, self.max_episode_length,
-                                                   self._enable_early_termination, self._termination_height)
+                                                   self._enable_early_termination, self._termination_height,
+                                                   ball_root_states, target_states)
         return
 
     def _refresh_sim_tensors(self):
@@ -452,7 +489,8 @@ class HumanoidAMPBase(VecTask):
                 ball_root_states = torch.zeros((num_envs, 13), device=root_states.device, dtype=root_states.dtype)
         
         obs = compute_humanoid_observations(root_states, dof_pos, dof_vel,
-                                            key_body_pos, self._local_root_obs, ball_root_states)
+                                            key_body_pos, self._local_root_obs, ball_root_states,
+                                            self._target_states[env_ids] if env_ids is not None else self._target_states)
         return obs
 
     def _reset_actors(self, env_ids):
@@ -670,6 +708,16 @@ class HumanoidAMPBase(VecTask):
 
     def _update_debug_viz(self):
         self.gym.clear_lines(self.viewer)
+        
+        # Visualize Target
+        if self._target_states is not None:            
+            for i in range(self.num_envs):
+                target_pos = self._target_states[i, :3].cpu().numpy()
+                p1 = gymapi.Vec3(target_pos[0], target_pos[1], 0.0)
+                p2 = gymapi.Vec3(target_pos[0], target_pos[1], 2.0)
+                color = gymapi.Vec3(1.0, 0.0, 0.0)
+                self.gym.add_lines(self.viewer, self.envs[i], 1, [p1, p2], [color])
+                
         return
 
     def _init_headless_cameras(self):
@@ -794,8 +842,8 @@ def dof_to_obs(pose):
     return dof_obs
 
 @torch.jit.script
-def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, ball_root_states):
-    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor) -> Tensor
+def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, local_root_obs, ball_root_states, target_states):
+    # type: (Tensor, Tensor, Tensor, Tensor, bool, Tensor, Tensor) -> Tensor
     root_pos = root_states[:, 0:3]
     root_rot = root_states[:, 3:7]
     root_vel = root_states[:, 7:10]
@@ -833,7 +881,9 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     # Add ball info
     # Check if ball_root_states is zero tensor (meaning no ball)
     ball_pos = ball_root_states[:, 0:3]
+    ball_rot = ball_root_states[:, 3:7]
     ball_vel = ball_root_states[:, 7:10]
+    ball_ang_vel = ball_root_states[:, 10:13]
     
     # Calculate ball relative position to humanoid root (in local coordinate system)
     ball_rel_pos = ball_pos - root_pos
@@ -841,10 +891,21 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
     
     # Ball linear velocity (in local coordinate system)
     local_ball_vel = my_quat_rotate(heading_rot, ball_vel)
+
+    # Ball angular velocity (in local coordinate system)
+    local_ball_ang_vel = my_quat_rotate(heading_rot, ball_ang_vel)
+    local_ball_rot = quat_mul(heading_rot, ball_rot)
+    target_rel_pos = target_states[:, 0:3] - root_pos
+    local_target_rel_pos = my_quat_rotate(heading_rot, target_rel_pos)
     
-    # Concatenate ball info: relative position (3) + linear velocity (3) = 6
-    ball_obs = torch.cat((local_ball_rel_pos, local_ball_vel), dim=-1)
-    obs = torch.cat((base_obs, ball_obs), dim=-1)
+    # Concatenate extended ball info: 
+    # pos(3) + orientation(4) + lin_vel(3) + ang_vel(3) = 13
+    ball_extended_obs = torch.cat((local_ball_rel_pos, local_ball_rot, local_ball_vel, local_ball_ang_vel), dim=-1)
+    
+    # Add target info: rel_pos(3)
+    target_obs = local_target_rel_pos
+
+    obs = torch.cat((base_obs, ball_extended_obs, target_obs), dim=-1)
     
     return obs
 
@@ -853,10 +914,6 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 @torch.jit.script
 def compute_AMP_ball_reward(tgt_vel, root_pos, root_vel, ball_pos, ball_vel):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor) -> Tensor
-
-    # print(f"root pos:{root_pos}, ball pos:{ball_pos}, root vel:{root_vel}, ball vel:{ball_vel}, tgt vel:{tgt_vel}")
-
-
     tgt_dir = torch.zeros_like(tgt_vel)
     tgt_dir[..., 0] = 1.0
     tgt_vel_mag = torch.norm(tgt_vel)
@@ -869,156 +926,73 @@ def compute_AMP_ball_reward(tgt_vel, root_pos, root_vel, ball_pos, ball_vel):
     reward = 0.0 * rwd_cv + 0.9 * rwd_cp + 0.1 * rwd_bv
     return reward
 
+@torch.jit.script
+def compute_AMP_ball_reward_target(target_speed, root_pos, root_vel, ball_pos, ball_vel, target_pos):
+    # type: (float, Tensor, Tensor, Tensor, Tensor, Tensor) -> Tensor
+    ball_to_target = target_pos - ball_pos
+    dist_ball_target = torch.norm(ball_to_target, dim=1, keepdim=True)
+    d_star = ball_to_target / (dist_ball_target + 1e-6)
+    
+    # Calculate direction from char to ball (d_ball_t)
+    char_to_ball = ball_pos - root_pos
+    dist_char_ball = torch.norm(char_to_ball, dim=1, keepdim=True)
+    d_ball = char_to_ball / (dist_char_ball + 1e-6)
+    
+    v_star = target_speed # Target speed, usually 1 m/s
+    
+    v_com_projected = torch.sum(root_vel * d_ball, dim=1, keepdim=True)
+    rwd_cv = torch.exp(-1.5 * (torch.clamp(v_star - v_com_projected, min=0.0)**2))
 
+    rwd_cp = torch.exp(-0.5 * (dist_char_ball**2))
+    
+    v_ball_projected = torch.sum(ball_vel * d_star, dim=1, keepdim=True)
+    rwd_bv = torch.exp(-1.0 * (torch.clamp(v_star - v_ball_projected, min=0.0)**2))
+    
+    dist_char_target = torch.norm(target_pos - root_pos, dim=1, keepdim=True)
+    rwd_bp = torch.exp(-0.5 * (dist_char_target**2))
+    
+    reward = 0.1 * rwd_cv.squeeze() + 0.1 * rwd_cp.squeeze() + 0.3 * rwd_bv.squeeze() + 0.5 * rwd_bp.squeeze()
+    
+    return reward
 
 @torch.jit.script
-def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ball_root_states, foot_contact_forces, enable_ball_reward):
-    # type: (Tensor, float, float, Tensor, Tensor, Tensor, bool) -> Tensor
+def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ball_root_states, foot_contact_forces, target_states, enable_ball_reward, enable_target):
+    # type: (Tensor, float, float, Tensor, Tensor, Tensor, Tensor, bool, bool) -> Tensor
     
 
     root_local_x_speed = obs_buf[:, 7]
     speed_rwd = torch.exp(-(root_local_x_speed - task_speed)**2.0) * task_speed_mul  # Default speed reward
-    
-    # Initialize total reward
     reward = speed_rwd
 
-    # If there is a ball, modify speed reward to be towards the ball
-    # Check if ball_root_states is zero (by checking if position is all zeros)
-    ball_pos = ball_root_states[:, 0:3]
-    ball_has_data = torch.any(torch.abs(ball_pos) > 1e-6, dim=1)
-
-    
     if enable_ball_reward:
-        return compute_AMP_ball_reward(
-            tgt_vel=torch.tensor([task_speed, 0.0, 0.0], device=root_states.device),
-            root_pos = root_states[:, 0:3],
-            root_vel = root_states[:, 7:10],
-            ball_pos = ball_root_states[:, 0:3],
-            ball_vel = ball_root_states[:, 7:10],
-        )
-        root_pos = root_states[:, 0:3]
-        root_rot = root_states[:, 3:7]
-        root_vel = root_states[:, 7:10]
-        ball_vel = ball_root_states[:, 7:10]
-        
-        # --- Speed Reward Modification: Move towards the ball ---
-        # Calculate direction to ball in XY plane
-        vec_to_ball = ball_pos - root_pos
-        vec_to_ball[:, 2] = 0  # Ignore Z
-        dist_to_ball = torch.norm(vec_to_ball, dim=1, keepdim=True)
-        dir_to_ball = vec_to_ball / (dist_to_ball + 1e-6)
-        
-        # Project global root velocity onto direction to ball
-        # root_vel is global linear velocity
-        vel_towards_ball = torch.sum(root_vel[:, 0:2] * dir_to_ball[:, 0:2], dim=1)
-        
-        # Calculate speed reward based on velocity towards ball
-        # If ball exists, overwrite the default local-x speed reward with this one
-        speed_towards_ball_rwd = torch.exp(-(vel_towards_ball - task_speed)**2.0)
-        
-        # Only apply this modified reward where ball data exists
-        # speed_toball_rwd = torch.where(ball_has_data, speed_towards_ball_rwd, speed_rwd)
-        speed_toball_rwd = speed_towards_ball_rwd
-
-        ball_vel_x = ball_vel[:, 0]
-        speed_ball_rwd = torch.exp(-(ball_vel_x - task_speed)**2.0)
-
-        dir_rwd = vel_towards_ball / (torch.norm(root_vel[:, 0:2], dim=1) + 1e-6)
-
-
-
-        # Calculate ball relative position (in local coordinate system)
-        heading_rot = calc_heading_quat_inv(root_rot)
-        ball_rel_pos = ball_pos - root_pos
-        local_ball_rel_pos = my_quat_rotate(heading_rot, ball_rel_pos)
-        
-        # 1. Ball-Root Distance Reward: Encourage ball to stay 0.0m to 1.5m in front of body (XY plane only)
-        ball_distance = torch.norm(local_ball_rel_pos[:, 0:2], dim=1)
-        # Ideal distance range: 0.0m to 1.5m
-        ideal_min_dist = 0.0
-        ideal_max_dist = 1.5
-        ideal_center = (ideal_min_dist + ideal_max_dist) / 2.0
-        ideal_range = (ideal_max_dist - ideal_min_dist) / 2.0
-        
-        # Use Gaussian function to give high reward in ideal range
-        distance_rwd = torch.exp(-((ball_distance - ideal_center) / ideal_range)**2.0)
-
-        # If distance is too far (>2m), give penalty
-        far_penalty = torch.where(ball_distance > 2.0, -((ball_distance - 2.0) / 2.0) ** 2, torch.zeros_like(ball_distance))
-        far_penalty = torch.clamp(far_penalty, min=-1.0, max=0.0)
-        # distance_rwd = distance_rwd + far_penalty
-        
-        # 2. Directional Consistency: Encourage ball movement direction to match human forward direction
-        local_root_vel = my_quat_rotate(heading_rot, root_vel)
-        local_ball_vel = my_quat_rotate(heading_rot, ball_vel)
-        
-        # Calculate forward direction (x direction)
-        root_forward = local_root_vel[:, 0:1]  # x direction velocity
-        ball_forward = local_ball_vel[:, 0:1]
-        
-        # Normalize velocity direction
-        root_vel_norm = torch.norm(local_root_vel, dim=1, keepdim=True) + 1e-6
-        ball_vel_norm = torch.norm(local_ball_vel, dim=1, keepdim=True) + 1e-6
-        
-        root_forward_dir = root_forward / root_vel_norm
-        ball_forward_dir = ball_forward / ball_vel_norm
-        
-        # Direction consistency: dot product of two direction vectors
-        direction_consistency = root_forward_dir * ball_forward_dir
-        direction_rwd = direction_consistency.squeeze()
-        
-        # 3. Contact Penalty/Bonus: Foot contacts ball and ball moves towards target direction
-        contact_bonus = torch.zeros_like(ball_distance)
-        if foot_contact_forces is not None:
-            # Check if feet have contact (contact force threshold)
-            foot_contact_forces = foot_contact_forces[..., 0:2]  # Use only XY components
-            contact_threshold = 1.0  # 10N
-            foot_contact_magnitude = torch.norm(foot_contact_forces, dim=2)  # [num_envs, 2]
-            has_foot_contact = torch.any(foot_contact_magnitude > contact_threshold, dim=1)
-            # print(foot_contact_forces)
-            # If feet contact and ball moves forward, give reward
-            ball_moving_forward = ball_forward_dir.squeeze() > 0.1
-            # contact_bonus = torch.where(
-            #     torch.logical_and(has_foot_contact, ball_moving_forward),
-            #     0.2 * ball_forward_dir.squeeze(),
-            #     torch.zeros_like(ball_distance)
-            # )
-            contact_bonus = torch.where(
-                has_foot_contact,
-                1.0,
-                torch.zeros_like(ball_distance)
+        if enable_target:
+            return compute_AMP_ball_reward_target(
+                target_speed=task_speed,
+                root_pos=root_states[:, 0:3],
+                root_vel=root_states[:, 7:10],
+                ball_pos=ball_root_states[:, 0:3],
+                ball_vel=ball_root_states[:, 7:10],
+                target_pos=target_states
             )
-        
-        # Apply mask, only apply rewards to environments with balls
-        # distance_rwd = torch.where(ball_has_data, distance_rwd, torch.zeros_like(distance_rwd))
-        # direction_rwd = torch.where(ball_has_data, direction_rwd, torch.zeros_like(direction_rwd))
-        # contact_bonus = torch.where(ball_has_data, contact_bonus, torch.zeros_like(contact_bonus))
-        
-        coef_speed_toball = 0.1
-        coef_speed_ball = 0.5
-        coef_dist =  1.0
-        coef_dir = 1.0
-        coef_penalty = 1.0
-        coef_contact = 1.0
-        reward =    coef_speed_toball * speed_toball_rwd + \
-                    coef_dist * distance_rwd + \
-                    coef_penalty * far_penalty + \
-                    coef_contact * contact_bonus + \
-                    coef_speed_ball * speed_ball_rwd + \
-                    coef_dir * dir_rwd
+        else:
+            num_envs = root_states.shape[0]
+            tgt_vel = torch.zeros((num_envs, 3), device=root_states.device)
+            tgt_vel[:, 0] = task_speed
+            return compute_AMP_ball_reward(
+                tgt_vel=tgt_vel,
+                root_pos=root_states[:, 0:3],
+                root_vel=root_states[:, 7:10],
+                ball_pos=ball_root_states[:, 0:3],
+                ball_vel=ball_root_states[:, 7:10]
+            )
     
     return reward
 
-
-
-
-
-
-
 @torch.jit.script
 def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_ids, rigid_body_pos,
-                           max_episode_length, enable_early_termination, termination_height):
-    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float) -> Tuple[Tensor, Tensor]
+                           max_episode_length, enable_early_termination, termination_height,
+                           ball_root_states, target_states):
+    # type: (Tensor, Tensor, Tensor, Tensor, Tensor, float, bool, float, Optional[Tensor], Optional[Tensor]) -> Tuple[Tensor, Tensor]
     terminated = torch.zeros_like(reset_buf)
 
     if (enable_early_termination):
@@ -1041,5 +1015,20 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
         terminated = torch.where(has_fallen, torch.ones_like(reset_buf), terminated)
     
     reset = torch.where(progress_buf >= max_episode_length - 1, torch.ones_like(reset_buf), terminated)
+
+    # Check if ball reached target
+    if ball_root_states is not None and target_states is not None:
+        ball_pos = ball_root_states[:, 0:3]
+        target_pos = target_states[:, 0:3]
+        
+        dist = torch.norm(ball_pos - target_pos, dim=1)
+        # Success threshold: 0.5 meters
+        success = dist < 0.5
+        
+        # Reset if success
+        reset = torch.where(success, torch.ones_like(reset), reset)
+        # We don't necessarily terminate (fail) on success, but we do reset the episode.
+        # terminated buffer is used for failure (death) usually. 
+        # reset buffer triggers reset.
 
     return reset, terminated

@@ -6,7 +6,7 @@ export http_proxy=http://100.68.175.95:3128
 # runs/HumanoidAMP_23-21-59-30/nn
 # export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
 
-python launch.py task=HumanoidAMPBall headless=True test=True num_envs=1 checkpoint=/root/code/ISRProject/runs/HumanoidAMPBall_28-04-15-03/nn/HumanoidAMPBall_28-04-15-15_1500.pth capture_video=True
+python launch.py task=HumanoidAMPBallTarget headless=True test=True num_envs=1 checkpoint=/root/code/ISRProject/runs/HumanoidAMPBall_31-05-56-08/nn/HumanoidAMPBall_31-05-56-24_4500.pth capture_video=True
 
 
 # export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json

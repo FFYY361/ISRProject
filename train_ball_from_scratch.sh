@@ -15,8 +15,8 @@ echo "================================"
 
 # 基础训练命令
 python launch.py \
-    task=HumanoidAMPBall \
-    train=HumanoidAMPBallPPO \
+    task=HumanoidAMPBallTarget \
+    train=HumanoidAMPBallTargetPPO \
     headless=True \
     wandb_activate=True
 
