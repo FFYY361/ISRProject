@@ -27,6 +27,7 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
+import cv2
 import numpy as np
 import os
 import torch
@@ -154,6 +155,8 @@ class HumanoidAMPBase(VecTask):
         if self.viewer is None and virtual_screen_capture:     
             self._init_headless_cameras()
 
+
+
         return
 
     def get_obs_size(self):
@@ -187,6 +190,9 @@ class HumanoidAMPBase(VecTask):
         if n > 0:
             dist = 5.0 + 5.0 * torch.rand(n, device=self.device)
             angle = (torch.rand(n, device=self.device) - 0.5) * np.pi / 2
+
+            dist = 15 * torch.ones(n, device=self.device)
+            angle = 0.5 * np.pi / 2.0 * torch.ones(n, device=self.device)
 
             root_pos = self._root_states[env_ids, 0:3]
             root_rot = self._root_states[env_ids, 3:7]
@@ -593,6 +599,8 @@ class HumanoidAMPBase(VecTask):
         if self._has_ball_asset:
             self._log_ball_metrics()
 
+        # print(self._target_states, self.debug_viz, self.viewer)
+        # exit(1)
         # debug viz
         if self.viewer and self.debug_viz:
             self._update_debug_viz()
@@ -631,6 +639,52 @@ class HumanoidAMPBase(VecTask):
             torch_cam_tensor = gymtorch.wrap_tensor(cam_img_tensor)
             img_raw = torch_cam_tensor.cpu().numpy()
             self.gym.end_access_image_tensors(self.sim)
+
+            # Visualize the target pose
+            # target world position (bottom and top of the line)
+            def world_to_pixel(pos_world, view, proj, width, height):
+                """
+                pos_world: (3,)
+                return: (u, v) pixel coordinate
+                """
+                p = np.ones(4)
+                p[:3] = pos_world
+                clip = (p @ view) @ proj
+                # print(f"p:{p}, view: {view}, proj: {proj}")
+                # print(f"p @ view: {p @ view}, clip: {clip}")
+                # print("clip:", clip)
+                if clip[3] <= 0:
+                    return None  # behind camera
+                ndc = clip[:3] / clip[3]   # [-1, 1]
+                u = int((ndc[0] * 0.5 + 0.5) * width)
+                v = int((1.0 - (ndc[1] * 0.5 + 0.5)) * height)
+                return u, v
+            H, W, _ = img_raw.shape
+            view = self.gym.get_camera_view_matrix(
+                self.sim, self.envs[0], self.cam_handles[0]
+            )
+            proj = self.gym.get_camera_proj_matrix(
+                self.sim, self.envs[0], self.cam_handles[0]
+            )
+            # print(self._target_states[0])
+            tx, ty, tz = self._target_states[0, :3].cpu().numpy()
+            p_bot = world_to_pixel(
+                np.array([tx, ty, 0.0]), view, proj, W, H
+            )
+            p_top = world_to_pixel(
+                np.array([tx, ty, 2.0]), view, proj, W, H
+            )
+            # print(H, W, p_bot, p_top)
+            # print(view)
+            # print(proj)
+            if p_bot is not None and p_top is not None:
+                cv2.line(
+                    img_raw,
+                    p_bot,
+                    p_top,
+                    (255, 0, 0),   # 红色（RGB）
+                    2
+                )
 
             # Return RGB (remove Alpha channel)
             return img_raw[:, :, :3]
@@ -708,7 +762,6 @@ class HumanoidAMPBase(VecTask):
 
     def _update_debug_viz(self):
         self.gym.clear_lines(self.viewer)
-        
         # Visualize Target
         if self._target_states is not None:            
             for i in range(self.num_envs):
@@ -914,16 +967,32 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 @torch.jit.script
 def compute_AMP_ball_reward(tgt_vel, root_pos, root_vel, ball_pos, ball_vel):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor) -> Tensor
-    tgt_dir = torch.zeros_like(tgt_vel)
-    tgt_dir[..., 0] = 1.0
+
+    # print(f"root pos:{root_pos}, ball pos:{ball_pos}, root vel:{root_vel}, ball vel:{ball_vel}, tgt vel:{tgt_vel}")
+
+
+    # tgt_dir = torch.zeros_like(tgt_vel)
+    # tgt_dir[..., 0] = 1.0
+
+    # tgt_pos = torch.zeros(
+    #     tgt_vel.shape[:-1] + (2,),
+    #     device=tgt_vel.device
+    # )
+    # tgt_pos[..., 0] = 10.0
+    # tgt_pos[..., 1] = 10.0
+    tgt_pos = torch.tensor([10.0, 10.0], device=tgt_vel.device)
+    tgt_ball_dir = tgt_pos - ball_pos[..., 0:2]
+    tgt_ball_dir = tgt_ball_dir / (torch.norm(tgt_ball_dir, dim=-1, keepdim=True) + 1e-6)
+
     tgt_vel_mag = torch.norm(tgt_vel)
     ball_rel_pos = ball_pos - root_pos
     ball_rel_dir = ball_rel_pos / (torch.norm(ball_rel_pos, dim=1, keepdim=True) + 1e-6)
     rwd_cv = torch.exp(-1.5 * (torch.clamp(tgt_vel_mag - torch.sum(root_vel * ball_rel_dir, dim=1), min=0.0)**2))
     rwd_cp = torch.exp(-0.5 * (torch.norm(ball_rel_pos, dim=1) ** 2))
-    rwd_bv = torch.exp(-1.0 * ((tgt_vel_mag - torch.sum(ball_vel * tgt_dir, dim=1))**2))
+    rwd_bv = torch.exp(-1.0 * ((tgt_vel_mag - torch.sum(ball_vel[..., 0:2] * tgt_ball_dir, dim=1))**2))
+    rwd_bp = torch.exp(-0.5 * (torch.norm(ball_pos[..., 0:2] - tgt_pos, dim=1) ** 2))
 
-    reward = 0.0 * rwd_cv + 0.9 * rwd_cp + 0.1 * rwd_bv
+    reward = 0.0 * rwd_cv + 0.4 * rwd_cp + 0.2 * rwd_bv + 0.4 * rwd_bp
     return reward
 
 @torch.jit.script
@@ -946,12 +1015,13 @@ def compute_AMP_ball_reward_target(target_speed, root_pos, root_vel, ball_pos, b
     rwd_cp = torch.exp(-0.5 * (dist_char_ball**2))
     
     v_ball_projected = torch.sum(ball_vel * d_star, dim=1, keepdim=True)
-    rwd_bv = torch.exp(-1.0 * (torch.clamp(v_star - v_ball_projected, min=0.0)**2))
+    # rwd_bv = torch.exp(-1.0 * (torch.clamp(v_star - v_ball_projected, min=0.0)**2))
+    rwd_bv = torch.exp(-1.0 * ((v_star - v_ball_projected)**2))
     
     dist_char_target = torch.norm(target_pos - root_pos, dim=1, keepdim=True)
     rwd_bp = torch.exp(-0.5 * (dist_char_target**2))
     
-    reward = 0.1 * rwd_cv.squeeze() + 0.1 * rwd_cp.squeeze() + 0.3 * rwd_bv.squeeze() + 0.5 * rwd_bp.squeeze()
+    reward = 0.0 * rwd_cv.squeeze() + 0.2 * rwd_cp.squeeze() + 0.3 * rwd_bv.squeeze() + 0.5 * rwd_bp.squeeze()
     
     return reward
 
