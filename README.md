@@ -1,8 +1,8 @@
-## Paper Reproduction: AMP: Adversarial Motion Priors for Stylized Physics-Based Character Control
+## Humanoid Soccer Dribbling with Motion Priors
+
+> **Based on**: [SZU-AdvTech-2023/055-AMP-Adversarial-Motion-Priors-for-Stylized-Physics-Based-Character-Control](https://github.com/SZU-AdvTech-2023/055-AMP-Adversarial-Motion-Priors-for-Stylized-Physics-Based-Character-Control)
 
 ### Environment Setup
-
-Ensure your system environment is Linux with Python 3.8, and that you have a display connected (or use a virtual display with 3D acceleration) for rendering.
 
 First, download the Isaac Gym Preview 4 physics simulation environment [here](https://developer.nvidia.com/isaac-gym), follow the installation instructions, and verify that the example programs run correctly: `python/examples`, such as `joint_monkey.py`.
 
@@ -51,8 +51,8 @@ python launch.py \
 
 #### 2. Ball Dribbling with Target - From Scratch (`train_ball_from_scratch.sh`)
 
-This script trains a humanoid to dribble a ball toward a target position from scratch. It uses:
-- **Task Config**: `HumanoidAMPBallTarget.yaml` - Ball interaction with target or `HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
+This script trains a humanoid to dribble a ball from scratch. It uses:
+- **Task Config**: <br> `HumanoidAMPBallTarget.yaml` - Ball interaction with target<br>`HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
   - `motion_file: "amp_humanoid_run.npy"` - Uses running motion
   - `task_speed: 2.5` - Target forward speed
 - **Train Config**: `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task or `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task
@@ -76,8 +76,8 @@ python launch.py \
 
 #### 3. Ball Dribbling without Target - From Checkpoint (`train_ball_from_checkpoint.sh`)
 
-This script continues training a humanoid to dribble a ball without a target position, starting from a pre-trained checkpoint. It uses:
-- **Task Config**: `HumanoidAMPBallTarget.yaml` - Ball interaction with target or `HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
+This script continues training a humanoid to dribble a ball, starting from a pre-trained checkpoint. It uses:
+- **Task Config**: <br> `HumanoidAMPBallTarget.yaml` - Ball interaction with target <br> `HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
   - `motion_file: "amp_humanoid_run.npy"` - Uses running motion
   - `task_speed: 2.5` - Target forward speed
 - **Train Config**: `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task or `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task 
@@ -113,9 +113,9 @@ After training, test your model with:
 ```bash
 python launch.py \
     task=<TaskName> \
-    headless=False \
+    headless=True \
     test=True \
-    num_envs=64 \
+    num_envs=1 \
     checkpoint=/path/to/saved/model/in/runs/nn/<model_name>.pth
 ```
 
@@ -126,9 +126,9 @@ To render trained model results to video, use the following command:
 ```bash
 python launch.py \
     task=<TaskName> \
-    headless=False \
+    headless=True \
     test=True \
-    num_envs=64 \
+    num_envs=1 \
     checkpoint=/path/to/saved/model/in/runs/nn/<model_name>.pth \
     capture_video=True
 ```
@@ -136,3 +136,11 @@ python launch.py \
 Replace `<TaskName>` with the appropriate task name (e.g., `HumanoidAMP`, `HumanoidAMPBallTarget`, or `HumanoidAMPBall`).
 
 The rendered videos will be saved in the current working directory.
+
+## References
+
+This project is based on the following paper and repository:
+
+- **AMP Paper**: Peng, X. B., Ma, Z., Abbeel, P., Levine, S., & Kanazawa, A. (2021). AMP: Adversarial Motion Priors for Stylized Physics-Based Character Control. *ACM Transactions on Graphics (TOG)*, 40(4), 1-20. [Project Page](https://xbpeng.github.io/projects/AMP/) | [arXiv](https://arxiv.org/abs/2104.02180)
+
+- **Original Repository**: [SZU-AdvTech-2023/055-AMP-Adversarial-Motion-Priors-for-Stylized-Physics-Based-Character-Control](https://github.com/SZU-AdvTech-2023/055-AMP-Adversarial-Motion-Priors-for-Stylized-Physics-Based-Character-Control)
