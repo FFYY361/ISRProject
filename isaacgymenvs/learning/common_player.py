@@ -54,7 +54,7 @@ class CommonPlayer(players.PpoPlayerContinuous):
         return
 
     def run(self):
-        self.games_num = 10
+        self.games_num = 3
         n_games = self.games_num
         render = self.render_env
         n_game_life = self.n_game_life

@@ -30,10 +30,10 @@ env:
   task_speed: 2.5 
   task_speed_mul: 1.0
 
-  # 加载球体（用于第二阶段带球训练）
+  # enable ball and ball reward
   enableBall: True
   enableBallReward: True
-  enableTarget: True  # 启用 Target
+  enableTarget: True
 
   asset:
     assetFileName: "mjcf/amp_humanoid.xml"

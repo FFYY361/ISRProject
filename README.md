@@ -1,12 +1,12 @@
-## 论文复现：AMP: Adversarial Motion Priors for Stylized Physics-Based Character Control
+## Paper Reproduction: AMP: Adversarial Motion Priors for Stylized Physics-Based Character Control
 
-### 安装环境
+### Environment Setup
 
-确保运行软件环境为 Linux 操作系统、Python 3.8 编程环境；并确保有插入显示器（或使用具有3D加速的虚拟显示器），以便渲染。
+Ensure your system environment is Linux with Python 3.8, and that you have a display connected (or use a virtual display with 3D acceleration) for rendering.
 
-首先下载物理仿真环境 Isaac Gym Preview 4 [点击此处](https://developer.nvidia.com/isaac-gym)，按照其中的说明安装好，然后确保实例程序能够正常运行：`python/examples` ，比如`joint_monkey.py`。
+First, download the Isaac Gym Preview 4 physics simulation environment [here](https://developer.nvidia.com/isaac-gym), follow the installation instructions, and verify that the example programs run correctly: `python/examples`, such as `joint_monkey.py`.
 
-然后，安装如下所需的包：
+Then, install the required packages:
 
 ```
 "gym==0.23.1",
@@ -23,47 +23,116 @@
 "trimesh==3.23.5",
 ```
 
-### 训练模型
+### Training Models
 
-对于训练原始的模型，设置 HumanoidAMPPO.yaml 配置为 `reward_combine: 'add' ` ，然后使用下面的命令行：
+This project provides three training scripts for different scenarios:
 
+#### 1. Basic HumanoidAMP Training (`train.sh`)
+
+This script trains a basic humanoid character using the AMP (Adversarial Motion Priors) framework without any ball interaction. It uses:
+- **Task Config**: `HumanoidAMP.yaml` - Basic humanoid locomotion
+- **Train Config**: `HumanoidAMPPPO.yaml` - Standard PPO training with AMP discriminator
+- **Motion File**: Choose from provided dataset
+
+To train:
 ```bash
-python launch.py task=HumanoidAMP headless=True
+bash train.sh
 ```
 
-在训练好以后，测试训练的结果如下：
-
+Or manually:
 ```bash
-python launch.py task=HumanoidAMP headless=False test=True num_envs=64 checkpoint=/path/to/saved/model/in/runs/nn
+python launch.py \
+    task=HumanoidAMP \
+    train=HumanoidAMPPPO \
+    headless=True \
+    wandb_activate=True \
+    num_envs=4096
 ```
 
-对于改进后的模型，设置 HumanoidAMPPO.yaml 配置为 `reward_combine: 'mul' ` ，然后使用下面的命令行：
+#### 2. Ball Dribbling with Target - From Scratch (`train_ball_from_scratch.sh`)
 
+This script trains a humanoid to dribble a ball toward a target position from scratch. It uses:
+- **Task Config**: `HumanoidAMPBallTarget.yaml` - Ball interaction with target or `HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
+  - `motion_file: "amp_humanoid_run.npy"` - Uses running motion
+  - `task_speed: 2.5` - Target forward speed
+- **Train Config**: `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task or `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task
+  - `reward_combine: 'add'` - Task reward and discriminator reward are added
+  - `task_reward_w: 1.0`, `disc_reward_w: 0.2` - Reward weights
+
+To train:
 ```bash
-python launch.py task=HumanoidAMP headless=True
+bash train_ball_from_scratch.sh
 ```
 
-在训练好以后，测试训练的结果如下：
-
+Or manually:
 ```bash
-python launch.py task=HumanoidAMP headless=False test=True num_envs=64 checkpoint=/path/to/saved/model/in/runs/nn
+python launch.py \
+    task=HumanoidAMPBallTarget \
+    train=HumanoidAMPBallTargetPPO \
+    headless=True \
+    wandb_activate=True \
+    num_envs=4096
 ```
 
-### 渲染结果到视频
+#### 3. Ball Dribbling without Target - From Checkpoint (`train_ball_from_checkpoint.sh`)
 
-将训练好的模型结果渲染到视频，可以使用如下命令行：
+This script continues training a humanoid to dribble a ball without a target position, starting from a pre-trained checkpoint. It uses:
+- **Task Config**: `HumanoidAMPBallTarget.yaml` - Ball interaction with target or `HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
+  - `motion_file: "amp_humanoid_run.npy"` - Uses running motion
+  - `task_speed: 2.5` - Target forward speed
+- **Train Config**: `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task or `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task 
+  - `reward_combine: 'add'` - Task reward and discriminator reward are added
+  - `task_reward_w: 1.0`, `disc_reward_w: 0.2` - Reward weights
 
+To train:
 ```bash
-python launch.py task=HumanoidAMP headless=False test=True num_envs=64 checkpoint=/path/to/saved/model/in/runs/nn capture_video=True
+bash train_ball_from_checkpoint.sh <checkpoint_path>
 ```
 
-所渲染的视频会保存到当前工作目录下。
+Example:
+```bash
+bash train_ball_from_checkpoint.sh ./runs/HumanoidAMPBall_31-08-07-42/nn/HumanoidAMPBall_31-08-08-00.pth
+```
 
-### 转换为基于动力学的动捕文件
+Or manually:
+```bash
+python launch.py \
+    task=HumanoidAMPBall \
+    train=HumanoidAMPBallPPO \
+    headless=True \
+    checkpoint="<checkpoint_path>" \
+    num_envs=4096 \
+    wandb_activate=True
+```
 
-可以参考如下函数（其余详见库 `fmbvh` 中的各个模块）：
 
-`./isaacgymenvs/tasks/amp/utils_amp/motion_lib.export_bvh`
+### Test Trained Models
 
-在运行上面的训练、测试等指令，都会在`./runs/` 目录下自动导出动捕文件。
+After training, test your model with:
 
+```bash
+python launch.py \
+    task=<TaskName> \
+    headless=False \
+    test=True \
+    num_envs=64 \
+    checkpoint=/path/to/saved/model/in/runs/nn/<model_name>.pth
+```
+
+### Rendering Results to Video
+
+To render trained model results to video, use the following command:
+
+```bash
+python launch.py \
+    task=<TaskName> \
+    headless=False \
+    test=True \
+    num_envs=64 \
+    checkpoint=/path/to/saved/model/in/runs/nn/<model_name>.pth \
+    capture_video=True
+```
+
+Replace `<TaskName>` with the appropriate task name (e.g., `HumanoidAMP`, `HumanoidAMPBallTarget`, or `HumanoidAMPBall`).
+
+The rendered videos will be saved in the current working directory.

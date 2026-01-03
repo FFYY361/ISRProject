@@ -43,12 +43,14 @@ from ..base.vec_task import VecTask
 
 DOF_BODY_IDS = [1, 2, 3, 4, 6, 7, 9, 10, 11, 12, 13, 14]
 DOF_OFFSETS = [0, 3, 6, 9, 10, 13, 14, 17, 18, 21, 24, 25, 28]
+
 # Observation size
 # Original: 13 (root) + 52 (dof_pos) + 28 (dof_vel) + 12 (key_body_pos) = 105
 # Added ball info: 
 #   Ball state: pos(3) + rot(4) + lin_vel(3) + ang_vel(3) = 13
 #   Target: rel_pos(3) = 3
 # Total added: 16
+
 NUM_OBS = 13 + 52 + 28 + 12 + 13 + 3 
 NUM_ACTIONS = 28
 
@@ -188,11 +190,8 @@ class HumanoidAMPBase(VecTask):
     def _reset_env_tensors(self, env_ids):
         n = len(env_ids)
         if n > 0:
-            dist = 10.0 + 5.0 * torch.rand(n, device=self.device)
+            dist = 15.0 + 5.0 * torch.rand(n, device=self.device)
             angle = (2 * torch.rand(n, device=self.device) - 1.0) * np.pi / 2
-
-            # dist = 15 * torch.ones(n, device=self.device)
-            # angle = 0.5 * np.pi / 2.0 * torch.ones(n, device=self.device)
 
             root_pos = self._root_states[env_ids, 0:3]
             root_rot = self._root_states[env_ids, 3:7]
@@ -252,7 +251,7 @@ class HumanoidAMPBase(VecTask):
         # Default is not to load ball, only load when explicitly specified in config
         self._has_ball_asset = self.cfg["env"].get("enableBall", False)
         self._enable_ball_reward = self.cfg["env"].get("enableBallReward", self._has_ball_asset)
-        self._enable_target = self.cfg["env"].get("enableTarget", True)
+        self._enable_target = self.cfg["env"].get("enableTarget", False)
         ball_asset_count = 0
         
         if self._has_ball_asset:
@@ -380,8 +379,6 @@ class HumanoidAMPBase(VecTask):
                 curr_high = lim_high[dof_offset]
                 curr_mid = 0.5 * (curr_high + curr_low)
                 
-                # extend the action range to be a bit beyond the joint limits so that the motors
-                # don't lose their strength as they approach the joint limits
                 curr_scale = 0.7 * (curr_high - curr_low)
                 curr_low = curr_mid - curr_scale
                 curr_high = curr_mid + curr_scale
@@ -533,9 +530,6 @@ class HumanoidAMPBase(VecTask):
             # Reset ball state (position in front of humanoid, zero velocity)
             ball_actor_indices = env_ids * num_actors_per_env + 1
             ball_initial_states = all_root_states[ball_actor_indices].clone()
-            # Set ball initial position (in front of humanoid)
-            # ball_initial_states[:, 0:3] = self._initial_root_states[env_ids, 0:3] + torch.tensor([0.8, 0.0, 0.11], device=self.device)
-            # Hardcode ball Z to 0.11 (radius) to ensure it starts on the ground
             ball_initial_states[:, 0] = self._initial_root_states[env_ids, 0] + 0.8
             ball_initial_states[:, 1] = self._initial_root_states[env_ids, 1] + 0.0
             ball_initial_states[:, 2] = 0.11
@@ -556,8 +550,6 @@ class HumanoidAMPBase(VecTask):
         self.gym.set_actor_root_state_tensor_indexed(self.sim,
                                                      gymtorch.unwrap_tensor(self._actor_root_state_tensor),
                                                      gymtorch.unwrap_tensor(all_actor_indices), len(all_actor_indices))
-
-        # DOF state only needs to reset humanoid (ball has no DOF)
         if self._has_ball_asset:
             humanoid_actor_indices_for_dof = humanoid_actor_indices.to(dtype=torch.int32)
         else:
@@ -609,11 +601,6 @@ class HumanoidAMPBase(VecTask):
 
     def render(self, mode="rgb_array"):
         if mode == "rgb_array" and self.virtual_screen_capture:
-            # 1. If headless mode, ensure camera is initialized
-            # if not hasattr(self, 'cam_handles') or len(self.cam_handles) == 0:
-            #     self._init_headless_cameras()
-
-            # 2. Update follow position for all cameras
             self.gym.refresh_actor_root_state_tensor(self.sim)
             for i in range(self.num_envs):
                 char_pos = self._root_states[i, 0:3].cpu().numpy()
@@ -621,14 +608,11 @@ class HumanoidAMPBase(VecTask):
                 cam_target = gymapi.Vec3(char_pos[0], char_pos[1], 1.0)
                 self.gym.set_camera_location(self.cam_handles[i], self.envs[i], cam_pos, cam_target)
 
-            # 3. Execute graphics rendering step
             self.gym.fetch_results(self.sim, True)
             self.gym.step_graphics(self.sim)
-            
-            # Critical fix: Use correct method name render_all_camera_sensors
+
             self.gym.render_all_camera_sensors(self.sim)
-            
-            # 4. Get image data
+
             self.gym.start_access_image_tensors(self.sim)
             # Get camera image for the first environment
             cam_img_tensor = self.gym.get_camera_image_gpu_tensor(
@@ -788,7 +772,6 @@ class HumanoidAMPBase(VecTask):
             cam_handle = self.gym.create_camera_sensor(self.envs[i], camera_props)
             self.cam_handles.append(cam_handle)
             
-            # Initial position setting (imitating _init_camera)
             char_pos = self._root_states[i, 0:3].cpu().numpy()
             cam_pos = gymapi.Vec3(char_pos[0], char_pos[1] - 3.0, 1.0)
             cam_target = gymapi.Vec3(char_pos[0], char_pos[1], 1.0)
@@ -967,19 +950,6 @@ def compute_humanoid_observations(root_states, dof_pos, dof_vel, key_body_pos, l
 @torch.jit.script
 def compute_AMP_ball_reward(tgt_vel, root_pos, root_vel, ball_pos, ball_vel):
     # type: (Tensor, Tensor, Tensor, Tensor, Tensor) -> Tensor
-
-    # print(f"root pos:{root_pos}, ball pos:{ball_pos}, root vel:{root_vel}, ball vel:{ball_vel}, tgt vel:{tgt_vel}")
-
-
-    # tgt_dir = torch.zeros_like(tgt_vel)
-    # tgt_dir[..., 0] = 1.0
-
-    # tgt_pos = torch.zeros(
-    #     tgt_vel.shape[:-1] + (2,),
-    #     device=tgt_vel.device
-    # )
-    # tgt_pos[..., 0] = 10.0
-    # tgt_pos[..., 1] = 10.0
     tgt_pos = torch.tensor([10.0, 10.0], device=tgt_vel.device)
     tgt_ball_dir = tgt_pos - ball_pos[..., 0:2]
     tgt_ball_dir = tgt_ball_dir / (torch.norm(tgt_ball_dir, dim=-1, keepdim=True) + 1e-6)
@@ -1028,7 +998,6 @@ def compute_AMP_ball_reward_target(target_speed, root_pos, root_vel, ball_pos, b
 @torch.jit.script
 def compute_humanoid_reward(obs_buf, task_speed, task_speed_mul, root_states, ball_root_states, foot_contact_forces, target_states, enable_ball_reward, enable_target):
     # type: (Tensor, float, float, Tensor, Tensor, Tensor, Tensor, bool, bool) -> Tensor
-    
 
     root_local_x_speed = obs_buf[:, 7]
     speed_rwd = torch.exp(-(root_local_x_speed - task_speed)**2.0) * task_speed_mul  # Default speed reward
@@ -1077,10 +1046,6 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
         fall_height = torch.any(fall_height, dim=-1)
 
         has_fallen = torch.logical_and(fall_contact, fall_height)
-        # has_fallen = fall_height
-
-        # first timestep can sometimes still have nonzero contact forces
-        # so only check after first couple of steps
         has_fallen *= (progress_buf > 1)
         terminated = torch.where(has_fallen, torch.ones_like(reset_buf), terminated)
     
@@ -1092,13 +1057,9 @@ def compute_humanoid_reset(reset_buf, progress_buf, contact_buf, contact_body_id
         target_pos = target_states[:, 0:3]
         
         dist = torch.norm(ball_pos - target_pos, dim=1)
-        # Success threshold: 0.5 meters
         success = dist < 0.5
         
         # Reset if success
         reset = torch.where(success, torch.ones_like(reset), reset)
-        # We don't necessarily terminate (fail) on success, but we do reset the episode.
-        # terminated buffer is used for failure (death) usually. 
-        # reset buffer triggers reset.
 
     return reset, terminated
