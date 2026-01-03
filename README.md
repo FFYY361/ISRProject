@@ -49,13 +49,13 @@ python launch.py \
     num_envs=4096
 ```
 
-#### 2. Ball Dribbling with Target - From Scratch (`train_ball_from_scratch.sh`)
+#### 2. Ball Dribbling - From Scratch (`train_ball_from_scratch.sh`)
 
 This script trains a humanoid to dribble a ball from scratch. It uses:
 - **Task Config**: <br> `HumanoidAMPBallTarget.yaml` - Ball interaction with target<br>`HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
   - `motion_file: "amp_humanoid_run.npy"` - Uses running motion
   - `task_speed: 2.5` - Target forward speed
-- **Train Config**: `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task or `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task
+- **Train Config**: <br> `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task <br> `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task
   - `reward_combine: 'add'` - Task reward and discriminator reward are added
   - `task_reward_w: 1.0`, `disc_reward_w: 0.2` - Reward weights
 
@@ -74,13 +74,13 @@ python launch.py \
     num_envs=4096
 ```
 
-#### 3. Ball Dribbling without Target - From Checkpoint (`train_ball_from_checkpoint.sh`)
+#### 3. Ball Dribbling - From Checkpoint (`train_ball_from_checkpoint.sh`)
 
 This script continues training a humanoid to dribble a ball, starting from a pre-trained checkpoint. It uses:
 - **Task Config**: <br> `HumanoidAMPBallTarget.yaml` - Ball interaction with target <br> `HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
   - `motion_file: "amp_humanoid_run.npy"` - Uses running motion
   - `task_speed: 2.5` - Target forward speed
-- **Train Config**: `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task or `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task 
+- **Train Config**: <br> `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling target task <br> `HumanoidAMPBallTargetPPO.yaml` - PPO training optimized for dribbling forward task 
   - `reward_combine: 'add'` - Task reward and discriminator reward are added
   - `task_reward_w: 1.0`, `disc_reward_w: 0.2` - Reward weights
 
@@ -109,19 +109,6 @@ python launch.py \
 ### Test Trained Models
 
 After training, test your model with:
-
-```bash
-python launch.py \
-    task=<TaskName> \
-    headless=True \
-    test=True \
-    num_envs=1 \
-    checkpoint=/path/to/saved/model/in/runs/nn/<model_name>.pth
-```
-
-### Rendering Results to Video
-
-To render trained model results to video, use the following command:
 
 ```bash
 python launch.py \
