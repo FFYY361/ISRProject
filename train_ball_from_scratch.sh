@@ -5,8 +5,8 @@
 export WANDB_BASE_URL=https://api.bandw.top
 
 # 代理设置
-export https_proxy=http://100.68.175.95:3128
-export http_proxy=http://100.68.175.95:3128
+# export https_proxy=http://100.68.175.95:3128
+# export http_proxy=http://100.68.175.95:3128
 
 # 训练参数
 echo "================================"
@@ -18,5 +18,6 @@ python launch.py \
     task=HumanoidAMPBallTarget \
     train=HumanoidAMPBallTargetPPO \
     headless=True \
-    wandb_activate=True
+    wandb_activate=True \
+    num_envs=4096 \
 

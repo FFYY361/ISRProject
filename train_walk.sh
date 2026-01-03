@@ -1,8 +1,8 @@
 #!/bin/bash
 export WANDB_BASE_URL=https://api.bandw.top
 # 代理设置
-export https_proxy=http://100.68.175.95:3128
-export http_proxy=http://100.68.175.95:3128
+# export https_proxy=http://100.68.175.95:3128
+# export http_proxy=http://100.68.175.95:3128
 
 # ============================================
 # Walk训练参数配置（第一阶段：不带球）
@@ -23,7 +23,7 @@ HEADLESS="True"
 # 构建训练命令
 # ============================================
 
-TRAIN_CMD="python launch.py task=$TASK train=$TRAIN_CONFIG headless=$HEADLESS"
+TRAIN_CMD="python launch.py task=$TASK train=$TRAIN_CONFIG headless=$HEADLESS num_envs=4096 wandb_activate=True"
 
 # 添加可选参数
 if [ ! -z "$CHECKPOINT" ]; then

@@ -91,5 +91,5 @@ params:
     normalize_amp_input: True
 
     task_reward_w: 1.0
-    disc_reward_w: 300.0
+    disc_reward_w: 150.0
     reward_combine: 'add'  # mul or add

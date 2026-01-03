@@ -7,7 +7,7 @@ physics_engine: ${..physics_engine}
 env: 
   numEnvs: ${resolve_default:4096,${...num_envs}} 
   envSpacing: 5
-  episodeLength: 300
+  episodeLength: 500
   cameraFollow: True # if the camera follows humanoid or not
   enableDebugVis: False
   
@@ -18,7 +18,7 @@ env:
   hybridInitProb: 0.5
   numAMPObsSteps: 2
 
-  localRootObs: False
+  localRootObs: True
   contactBodies: ["right_foot", "left_foot"]
   terminationHeight: 0.25
   enableEarlyTermination: True

@@ -5,8 +5,8 @@
 export WANDB_BASE_URL=https://api.bandw.top
 
 # 代理设置
-export https_proxy=http://100.68.175.95:3128
-export http_proxy=http://100.68.175.95:3128
+# export https_proxy=http://100.68.175.95:3128
+# export http_proxy=http://100.68.175.95:3128
 
 # 检查是否提供了checkpoint路径
 if [ -z "$1" ]; then
@@ -35,6 +35,6 @@ python launch.py \
     train=HumanoidAMPBallPPO \
     headless=True \
     checkpoint="$CHECKPOINT_PATH" \
-    num_envs=2048 \
+    num_envs=4096 \
     wandb_activate=True
 

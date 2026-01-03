@@ -72,7 +72,7 @@ params:
     truncate_grads: False
     e_clip: 0.2
     horizon_length: 32  # 增加horizon以增加每次收集的样本数，提高GPU利用率
-    minibatch_size: 98304  # 大幅增加minibatch size (32768 * 3) 以提高GPU利用率
+    minibatch_size: 65536  # 大幅增加minibatch size (32768 * 3) 以提高GPU利用率
     mini_epochs: 4  # 减少mini_epochs以便更频繁地进行前向传播，提高GPU利用率
     critic_coef: 5
     clip_value: False
@@ -85,12 +85,12 @@ params:
     amp_minibatch_size: 4096  
     disc_coef: 2  # 
     disc_logit_reg: 0.05
-    disc_grad_penalty: 2  
-    disc_reward_scale: 3 
-    disc_weight_decay: 0.0001
+    disc_grad_penalty: 5  
+    disc_reward_scale: 1 
+    disc_weight_decay: 0.01
     normalize_amp_input: True
 
     task_reward_w: 1.0
-    disc_reward_w: 2.0  
+    disc_reward_w: 100.0  
     reward_combine: 'add'  # mul or add
 

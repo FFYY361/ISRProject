@@ -188,11 +188,11 @@ class HumanoidAMPBase(VecTask):
     def _reset_env_tensors(self, env_ids):
         n = len(env_ids)
         if n > 0:
-            dist = 5.0 + 5.0 * torch.rand(n, device=self.device)
-            angle = (torch.rand(n, device=self.device) - 0.5) * np.pi / 2
+            dist = 10.0 + 5.0 * torch.rand(n, device=self.device)
+            angle = (2 * torch.rand(n, device=self.device) - 1.0) * np.pi / 2
 
-            dist = 15 * torch.ones(n, device=self.device)
-            angle = 0.5 * np.pi / 2.0 * torch.ones(n, device=self.device)
+            # dist = 15 * torch.ones(n, device=self.device)
+            # angle = 0.5 * np.pi / 2.0 * torch.ones(n, device=self.device)
 
             root_pos = self._root_states[env_ids, 0:3]
             root_rot = self._root_states[env_ids, 3:7]
