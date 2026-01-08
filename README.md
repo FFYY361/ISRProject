@@ -1,8 +1,8 @@
-## Humanoid Soccer Dribbling with Motion Priors
+# Humanoid Soccer Dribbling with Motion Priors
 
 > **Based on**: [SZU-AdvTech-2023/055-AMP-Adversarial-Motion-Priors-for-Stylized-Physics-Based-Character-Control](https://github.com/SZU-AdvTech-2023/055-AMP-Adversarial-Motion-Priors-for-Stylized-Physics-Based-Character-Control)
 
-### Environment Setup
+## Environment Setup
 
 First, download the Isaac Gym Preview 4 physics simulation environment [here](https://developer.nvidia.com/isaac-gym), follow the installation instructions, and verify that the example programs run correctly: `python/examples`, such as `joint_monkey.py`.
 
@@ -23,11 +23,11 @@ Then, install the required packages:
 "trimesh==3.23.5",
 ```
 
-### Training Models
+## Training Models
 
 This project provides three training scripts for different scenarios:
 
-#### 1. Basic HumanoidAMP Training (`train.sh`)
+### 1. Basic HumanoidAMP Training (`train.sh`)
 
 This script trains a basic humanoid character using the AMP (Adversarial Motion Priors) framework without any ball interaction. It uses:
 - **Task Config**: `HumanoidAMP.yaml` - Basic humanoid locomotion
@@ -49,7 +49,7 @@ python launch.py \
     num_envs=4096
 ```
 
-#### 2. Ball Dribbling - From Scratch (`train_ball_from_scratch.sh`)
+### 2. Ball Dribbling - From Scratch (`train_ball_from_scratch.sh`)
 
 This script trains a humanoid to dribble a ball from scratch. It uses:
 - **Task Config**: <br> `HumanoidAMPBallTarget.yaml` - Ball interaction with target<br>`HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
@@ -74,7 +74,7 @@ python launch.py \
     num_envs=4096
 ```
 
-#### 3. Ball Dribbling - From Checkpoint (`train_ball_from_checkpoint.sh`)
+### 3. Ball Dribbling - From Checkpoint (`train_ball_from_checkpoint.sh`)
 
 This script continues training a humanoid to dribble a ball, starting from a pre-trained checkpoint. It uses:
 - **Task Config**: <br> `HumanoidAMPBallTarget.yaml` - Ball interaction with target <br> `HumanoidAMPBallNoTarget.yaml` - Ball interaction without target
@@ -106,7 +106,7 @@ python launch.py \
 ```
 
 
-### Test Trained Models
+## Test Trained Models
 
 After training, test your model with:
 
@@ -123,6 +123,31 @@ python launch.py \
 Replace `<TaskName>` with the appropriate task name (e.g., `HumanoidAMP`, `HumanoidAMPBallTarget`, or `HumanoidAMPBall`).
 
 The rendered videos will be saved in the current working directory.
+
+## Experiment Results
+### Dancing Task Result
+<video controls width="720">
+  <source src="results/dance.mp4" type="video/mp4">
+</video>
+
+### Dribbling Forward Result
+<video controls width="720">
+  <source src="results/dribbling_natural.mp4" type="video/mp4">
+</video>
+
+<video controls width="720">
+  <source src="results/dribbling_frequently.mp4" type="video/mp4">
+</video>
+
+### Dribbling to Target Result
+<video controls width="720">
+  <source src="results/dribbling_target.mp4" type="video/mp4">
+</video>
+
+### Other Interesting Results
+<video controls width="720">
+  <source src="results/interest.mp4" type="video/mp4">
+</video>
 
 ## References
 
