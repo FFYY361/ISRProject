@@ -126,28 +126,18 @@ The rendered videos will be saved in the current working directory.
 
 ## Experiment Results
 ### Dancing Task Result
-<video controls width="720">
-  <source src="./results/dance.mp4" type="video/mp4">
-</video>
+<img src="./results/dance.gif" alt="Dancing Task Result" width="720" />
 
 ### Dribbling Forward Result
-<video controls width="720">
-  <source src="./results/dribbling_natural.mp4" type="video/mp4">
-</video>
+<img src="./results/dribbling_natural.gif" alt="Dancing Task Result" width="720" />
 
-<video controls width="720">
-  <source src="./results/dribbling_frequently.mp4" type="video/mp4">
-</video>
+<img src="./results/dribbling_frequently.gif" alt="Dancing Task Result" width="720" />
 
 ### Dribbling to Target Result
-<video controls width="720">
-  <source src="./results/dribbling_target.mp4" type="video/mp4">
-</video>
+<img src="./results/dribbling_target.gif" alt="Dancing Task Result" width="720" />
 
 ### Other Interesting Results
-<video controls width="720">
-  <source src="./results/interest.mp4" type="video/mp4">
-</video>
+<img src="./results/interest.gif" alt="Dancing Task Result" width="720" />
 
 ## References
 
